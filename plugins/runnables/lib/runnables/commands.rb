@@ -23,23 +23,24 @@ module Redcar
           project = Project::Manager.in_window(win)
           tree = Tree.new(
               TreeMirror.new(project),
-              TreeController.new(project)
+              TreeController.new(project,TREE_TITLE)
             )
           win.treebook.add_tree(tree)
         end
       end
     end
 
-    class RunEditTabCommand < Redcar::EditTabCommand
+    class RunEditTabCommand < Redcar::DocumentCommand
+      sensitize :open_project, :focussed_committed_mirror
       def execute
         project = Project::Manager.in_window(win)
         f = Runnables.file_mappings(project).detect do |file_mapping|
           regex = Regexp.new(file_mapping["regex"])
-          tab.edit_view.document.mirror.path =~ regex
+          doc.mirror.path =~ regex
         end
         run_tab(project.home_dir,tab, f) if f
       end
-      
+
       def run_tab(project_path,tab, file_mapping)
         command = file_mapping["command"]
         output = file_mapping["output"]
@@ -50,11 +51,12 @@ module Redcar
     end
 
     class RunAlternateEditTabCommand < RunEditTabCommand
+      sensitize :open_project
       def initialize
         @default   = nil
         @alternate = nil
       end
-      
+
       def execute
         project = Project::Manager.in_window(win)
         i = 0

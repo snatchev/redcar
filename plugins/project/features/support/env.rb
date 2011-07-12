@@ -1,20 +1,35 @@
-RequireSupportFiles File.dirname(__FILE__) + "/../../../edit_view/features/"
 
-def reset_project_fixtures
-  if @put_myproject_fixture_back
-    @put_myproject_fixture_back = nil
-    FileUtils.mv("plugins/project/spec/fixtures/myproject.bak",
-                 "plugins/project/spec/fixtures/myproject")
+module DrbShelloutHelper
+  def self.drb_system_thread
+    $drb_system_thread
   end
-  fixtures_path = File.expand_path(File.dirname(__FILE__) + "/../../spec/fixtures")
-  File.open(fixtures_path + "/winter.txt", "w") {|f| f.print "Wintersmith" }
-  FileUtils.rm_rf(fixtures_path + "/winter2.txt")
+
+  def self.drb_system_thread= value
+    $drb_system_thread = value
+  end
+
+  def self.kill_thread
+    if !($drb_system_thread.nil?) and $drb_system_thread.status
+      $drb_system_thread.kill
+    end
+  end
 end
 
-Before do
-  reset_project_fixtures
+require File.dirname(__FILE__) + "/../../spec/fixture_helper"
+
+def filter_storage
+  Redcar::Project::FindFileDialog.storage
 end
 
-After do
-  reset_project_fixtures
+Before("@project-fixtures") do
+  ProjectFixtureHelper.create_project_fixtures
+  ProjectFixtureHelper.make_subproject_fixtures
+  @original_file_size_limit = Redcar::Project::Manager.file_size_limit
+end
+
+After("@project-fixtures") do
+  Redcar::Project::Manager.reveal_files = true
+  ProjectFixtureHelper.clear_project_fixtures
+  DrbShelloutHelper.kill_thread
+  Redcar::Project::Manager.file_size_limit = @original_file_size_limit
 end

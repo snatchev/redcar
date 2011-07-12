@@ -4,6 +4,14 @@ require File.join(File.dirname(__FILE__), *%w".. spec_helper")
 FileList = Redcar::Project::FileList
 
 describe FileList do
+  before do
+    ProjectFixtureHelper.create_project_fixtures
+  end
+  
+  after do
+    ProjectFixtureHelper.clear_project_fixtures
+  end
+  
   def fixture_path
     File.expand_path(File.join(File.dirname(__FILE__), *%w".. fixtures myproject"))
   end
@@ -29,6 +37,10 @@ describe FileList do
     it "should return a list of files in the directory" do
       @file_list.all_files.include?(relative_path("README")).should be_true
       @file_list.all_files.include?(relative_path("lib", "foo_lib.rb")).should be_true
+    end
+
+    it "should return a list of files in a symlinked directory" do
+      @file_list.all_files.include?(relative_path("lib_symlink", "foo_lib.rb")).should be_true
     end
   end
   

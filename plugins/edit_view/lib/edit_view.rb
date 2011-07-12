@@ -3,6 +3,7 @@ require "edit_view/actions/arrow_keys"
 require "edit_view/actions/deletion"
 require "edit_view/actions/esc"
 require "edit_view/actions/tab"
+require "edit_view/actions/cmd_enter"
 require "edit_view/command"
 require "edit_view/document"
 require "edit_view/document/command"
@@ -62,7 +63,10 @@ module Redcar
       :DELETE_WORD_PREVIOUS,
       :DELETE_WORD_NEXT
     ]
-    
+
+    MAX_FONT_SIZE = 25
+    MIN_FONT_SIZE = 6
+
     include Redcar::Model
     extend Redcar::Observable
     include Redcar::Observable
@@ -109,7 +113,7 @@ module Redcar
         end
       end
     end
-    
+
     def self.toolbars
       ToolBar::Builder.build do
         item "Cut", :command => Redcar::Top::CutCommand, :icon => File.join(Redcar::ICONS_DIRECTORY, "scissors-blue.png"), :barname => :edit
@@ -140,7 +144,21 @@ module Redcar
         end
       end
     end
-
+    
+    def self.quit_guard
+      EditView::ModifiedTabsChecker.new(
+        Redcar.app.all_tabs.select {|t| t.is_a?(EditTab)},
+        "Save all before quitting?"
+      ).check
+    end
+    
+    def self.close_window_guard(win)
+      EditView::ModifiedTabsChecker.new(
+        win.notebooks.map(&:tabs).flatten.select {|t| t.is_a?(EditTab)},
+        "Save all before closing the window?"
+      ).check
+    end
+    
     def self.all_handlers(type)
       result = []
       method_name = :"#{type}_handlers"
@@ -174,6 +192,10 @@ module Redcar
       [Actions::EscapeHandler]
     end
 
+    def self.cmd_enter_handlers
+      [Actions::CmdEnterHandler]
+    end
+
     def self.all_tab_handlers
       all_handlers(:tab)
     end
@@ -196,6 +218,10 @@ module Redcar
 
     def self.all_backspace_handlers
       all_handlers(:backspace)
+    end
+
+    def self.all_cmd_enter_handlers
+      all_handlers(:cmd_enter)
     end
 
     def handle_key(handlers, modifiers)
@@ -234,18 +260,29 @@ module Redcar
       handle_key(EditView.all_backspace_handlers, modifiers)
     end
 
+    def cmd_enter_pressed(modifiers)
+      handle_key(EditView.all_cmd_enter_handlers, modifiers)
+    end
+
     # Called by the GUI whenever an EditView is focussed or
     # loses focus. Sends :focussed_edit_view event.
     #
     # Will return nil if the application is not focussed or if
     # no edit view is focussed.
     def self.focussed_edit_view=(edit_view)
+      return if @protect_edit_view_focus
       if edit_view
         @last_focussed_edit_view = edit_view
       end
       @focussed_edit_view = edit_view
       edit_view.check_for_updated_document if edit_view
       notify_listeners(:focussed_edit_view, edit_view)
+    end
+    
+    def self.protect_edit_view_focus
+      @protect_edit_view_focus = true
+      yield
+      @protect_edit_view_focus = false
     end
 
     def self.current
@@ -285,17 +322,27 @@ module Redcar
       ]
     end
 
-    def self.font_info
+    def self.default_font_size
       if Redcar.platform == :osx
-        default_font = "Monaco"
-        default_font_size = 15
+        15
       elsif Redcar.platform == :linux
-        default_font = "Monospace"
-        default_font_size = 11
+        11
       elsif Redcar.platform == :windows
-        default_font = "Courier New"
-        default_font_size = 9
+        9
       end
+    end
+    
+    def self.default_font
+      if Redcar.platform == :osx
+        "Monaco"
+      elsif Redcar.platform == :linux
+        "Monospace"
+      elsif Redcar.platform == :windows
+        "Courier New"
+      end
+    end
+
+    def self.font_info
       [ EditView.storage["font"] || default_font,
         EditView.storage["font-size"] || default_font_size ]
     end
@@ -367,7 +414,7 @@ module Redcar
       @focussed = nil
       create_history
     end
-    
+
     def create_history
       @history = Document::History.new(500)
       @history.subscribe do |action|
@@ -384,7 +431,9 @@ module Redcar
                                 :reset_undo,
                                 :cursor_offset, :cursor_offset=,
                                 :scroll_to_line, :compound,
-                                :begin_compound, :end_compound
+                                :begin_compound, :end_compound,
+                                :annotations, :remove_annotation,
+                                :remove_all_annotations
 
     def grammar
       @grammar
@@ -559,25 +608,25 @@ module Redcar
       end
       @last_checked = Time.now
     end
-    
+
     # This characters have custom Redcar behaviour.
     OVERRIDDEN_CHARACTERS = {
       9 => [:tab_pressed, []]
     }
-    
+
     def type_character(character)
       unless custom_character_handle(character)
         notify_listeners(:type_character, character)
       end
       history.record(character)
     end
-    
+
     def custom_character_handle(character)
       if method_call = OVERRIDDEN_CHARACTERS[character]
         send(*method_call)
       end
     end
-    
+
     # These actions have custom Redcar implementations that
     # override the default StyledText implementation. (Mainly for
     # soft tabs purposes.)
@@ -589,18 +638,22 @@ module Redcar
       :DELETE_PREVIOUS        => Actions::BackspaceHandler,
       :DELETE_NEXT            => Actions::DeleteHandler
     }
-    
+
     def invoke_overridden_action(action_symbol)
       if handler = OVERRIDDEN_ACTIONS[action_symbol]
         handler.send(action_symbol.to_s.downcase, self)
       end
     end
-    
+
     def invoke_action(action_symbol)
       unless invoke_overridden_action(action_symbol)
         notify_listeners(:invoke_action, action_symbol)
       end
       history.record(action_symbol)
+    end
+    
+    def inspect
+      "#<Redcar::EditView document:#{document.inspect}>"
     end
   end
 end

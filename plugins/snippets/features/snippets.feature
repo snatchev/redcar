@@ -13,7 +13,7 @@ Feature: Snippets
     And I press the Tab key in the edit tab
     Then the contents should be "Daniel Benjamin Lucraft<c>"
 
-  Scenario: Snippet text preceded by non-word characters
+  Scenario: Snippet text preceded by other characters and separated by non-word characters
     Given there is a snippet with tab trigger "ewf" and scope "" and content
       """
         Earth, Wind, and Fire
@@ -21,6 +21,12 @@ Feature: Snippets
     When I replace the contents with "}}ewf<c>"
     And I press the Tab key in the edit tab
     Then the contents should be "}}Earth, Wind, and Fire<c>"
+    When I replace the contents with "(1,2,4)}}ewf<c>"
+    And I press the Tab key in the edit tab
+    Then the contents should be "(1,2,4)}}Earth, Wind, and Fire<c>"
+    When I replace the contents with "blank.test1.ewf<c>"
+    And I press the Tab key in the edit tab
+    Then the contents should be "blank.test1.Earth, Wind, and Fire<c>"
 
   Scenario: Simple content snippet in plain text scope
     Given there is a snippet with tab trigger "DBL" and scope "text.plain" and content
@@ -182,6 +188,18 @@ Feature: Snippets
     When I replace the contents with "ABC fg<c>"
     And I press the Tab key in the edit tab
     Then the contents should be "ABC Felix 4 Gaeta"
+
+  Scenario: Does not trigger snippet on tab trigger with trailing space
+    Given there is a snippet with tab trigger "if" and scope "text.plain" and content
+      """
+        if ${1:condition}\n\t$0\nend
+      """
+    When I replace the contents with "ABC if <c>"
+    And I press the Tab key in the edit tab
+    And I move the cursor to 0
+    And I press the Tab key in the edit tab
+    Then the contents should not be "\t<c>ABC if condition\n\t\nend"
+    And the contents should be "\t<c>ABC if \t"
 
   Scenario: Leaves snippet on cursor move
     Given there is a snippet with tab trigger "if" and scope "text.plain" and content

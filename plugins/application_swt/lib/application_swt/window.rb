@@ -4,10 +4,12 @@ module Redcar
     class Window
       attr_reader :shell, :window
 
-      SASH_WIDTH = 5
-      TREEBOOK_WIDTH = 200
-      TOOLBAR_HEIGHT = 25
-      @toolbar_height = 30
+      SASH_WIDTH             = 5
+      TREEBOOK_WIDTH         = 200
+      MINIMUM_TREEBOOK_WIDTH = 0
+      VISIBLE_TREEBOOK_WIDTH = 25
+      TOOLBAR_HEIGHT         = 25
+      @toolbar_height        = 30
 
       class ShellListener
         include org.eclipse.swt.events.ShellListener
@@ -37,7 +39,7 @@ module Redcar
 
       def initialize(window)
         @window = window
-      	@notebook_handlers = Hash.new {|h,k| h[k] = []}
+        @notebook_handlers = Hash.new {|h,k| h[k] = []}
         create_shell
         create_sashes(window)
         new_notebook(window.notebooks.first)
@@ -63,9 +65,20 @@ module Redcar
         @window.add_listener(:focussed,      &method(:focussed))
         @window.add_listener(:speedbar_opened, &method(:speedbar_opened))
         @window.add_listener(:speedbar_closed, &method(:speedbar_closed))
+        @window.add_listener(:enlarge_notebook, &method(:enlarge_notebook))
+        @window.add_listener(:reset_notebook_widths, &method(:reset_notebook_sash_widths))
+        @window.add_listener(:increase_treebook_width, &method(:increase_treebook_width))
+        @window.add_listener(:decrease_treebook_width, &method(:decrease_treebook_width))
 
+        @window.add_listener(:toggle_trees_visible, &method(:toggle_sash_widths))
         @window.treebook.add_listener(:tree_added) do
-          if @treebook_unopened
+          if @treebook_unopened or not @window.trees_visible?
+            reset_sash_widths
+            @treebook_unopened = false
+          end
+        end
+        @window.treebook.add_listener(:tree_focussed) do |tree|
+          if @treebook_unopened or not @window.trees_visible?
             reset_sash_widths
             @treebook_unopened = false
           end
@@ -77,25 +90,45 @@ module Redcar
         @shell.add_key_listener(KeyListener.new(self))
       end
 
+      def treebook_hidden?
+        treebook_width <= VISIBLE_TREEBOOK_WIDTH
+      end
+
+      def treebook_width
+        @sash.layout_data.left.offset
+      end
+
+      def default_treebook_width
+        TREEBOOK_WIDTH + SASH_WIDTH
+      end
+
+      def fullscreen
+        @shell.fullScreen()
+      end
+
+      def fullscreen=(value)
+        @shell.setFullScreen(value)
+      end
+
       class KeyListener
         def initialize(edit_view_swt)
           @edit_view_swt = edit_view_swt
         end
 
         def key_pressed(key_event)
-        p key_event
+          p key_event
           if key_event.character == Swt::SWT::TAB
-          p :tab_pressedwin
+            p :tab_pressedwin
           elsif key_event.character == Swt::SWT::ESC
-          p :esc_pressedwin
+            p :esc_pressedwin
           end
         end
 
         def verify_key(key_event)
-        p :verkey
+          p :verkey
           if key_event.character == Swt::SWT::TAB
-          p :tab_pressed
-          key_event.doit = false
+            p :tab_pressed
+            key_event.doit = false
           end
         end
 
@@ -106,8 +139,8 @@ module Redcar
       def create_treebook_controller
         treebook = @window.treebook
         controller = ApplicationSWT::Treebook.new(
-          self,
-          treebook)
+        self,
+        treebook)
         treebook.controller = controller
       end
 
@@ -118,38 +151,32 @@ module Redcar
 
       def refresh_menu
         old_menu_bar = shell.menu_bar
-        @menu_controller = ApplicationSWT::Menu.new(self, Redcar.app.main_menu, Redcar.app.main_keymap, Swt::SWT::BAR)
+        @menu_controller = ApplicationSWT::Menu.new(self, Redcar.app.main_menu(@window), Redcar.app.main_keymap, Swt::SWT::BAR)
         shell.menu_bar = @menu_controller.menu_bar
         old_menu_bar.dispose if old_menu_bar
       end
-      
+
       def refresh_toolbar
-	if Redcar.app.show_toolbar?
-		@toolbar_controller = ApplicationSWT::ToolBar.new(self, Redcar.app.main_toolbar, Swt::SWT::HORIZONTAL | Swt::SWT::BORDER)
-    @toolbar_controller.show()
-		@toolbar_height = @toolbar_controller.height.to_i
-	else
-    @toolbar_controller.hide() if @toolbar_controller
-		@toolbar_height = 0
-	end
-	reset_sash_height
-      end
-      
-      def set_icon
-        path = File.join(icon_dir, icon_file)
-        icon = Swt::Graphics::Image.new(ApplicationSWT.display, path)
-        shell.image = icon
+        if Redcar.app.show_toolbar?
+          @toolbar_controller = ApplicationSWT::ToolBar.new(self, Redcar.app.main_toolbar, Swt::SWT::HORIZONTAL | Swt::SWT::BORDER)
+          @toolbar_controller.show()
+          @toolbar_height = @toolbar_controller.height.to_i
+        else
+          @toolbar_controller.hide() if @toolbar_controller
+          @toolbar_height = 0
+        end
+        reset_sash_height
       end
 
-      def icon_dir
-        File.join(Redcar.root, %w(plugins application icons))
+      def set_icon
+        shell.image = Icon.swt_image(icon_file)
       end
 
       def icon_file
         if Redcar::VERSION =~ /dev$/
-          "redcar_icon_beta_dev.png"
+          :redcar_icon_beta_dev
         else
-          "redcar_icon_beta.png"
+          :redcar_icon_beta
         end
       end
 
@@ -315,28 +342,69 @@ module Redcar
 
       def reset_sash_widths
         @treebook_unopened = !@window.treebook.trees.any?
+        width = 0
         if @window.treebook.trees.any?
-          @sash.layout_data.left = Swt::Layout::FormAttachment.new(0, TREEBOOK_WIDTH + SASH_WIDTH)
-        else
-          @sash.layout_data.left = Swt::Layout::FormAttachment.new(0, 0)
+          if @treebook_open_width
+            width = @treebook_open_width
+          else
+            width = default_treebook_width
+          end
         end
+        set_sash_widths(width)
+      end
+
+      def toggle_sash_widths
+        if treebook_hidden?
+          reset_sash_widths
+        else
+          @treebook_open_width = treebook_width
+          set_sash_widths(MINIMUM_TREEBOOK_WIDTH)
+        end
+      end
+
+      def decrease_treebook_width
+        width = treebook_width
+        unless width < MINIMUM_TREEBOOK_WIDTH + SASH_WIDTH
+          set_sash_widths(width-SASH_WIDTH)
+        end
+      end
+
+      def increase_treebook_width
+        set_sash_widths(treebook_width+SASH_WIDTH)
+      end
+
+      def set_sash_widths(offset)
+        @sash.layout_data.left = Swt::Layout::FormAttachment.new(0, offset)
         @shell.layout
       end
 
       def reset_notebook_sash_widths
         width = (100/@window.notebooks.length).to_i
         widths = [width]*@window.notebooks.length
-      	@notebook_sash.setWeights(widths.to_java(:int))
+        @notebook_sash.setWeights(widths.to_java(:int))
       end
-      
+
+      def enlarge_notebook(index=0)
+        if @window.notebooks.length > 1
+          widths = @notebook_sash.getWeights
+          small = index == 0 ? 1 : 0
+          total = widths[index] + widths[small]
+          unless widths[index]/total > 0.95
+            widths[small] = widths[small].to_i - SASH_WIDTH
+            widths[index] = widths[index].to_i + SASH_WIDTH
+            @notebook_sash.setWeights(widths.to_a.to_java(:int))
+          end
+        end
+      end
+
       def reset_sash_height
         @sash.layout_data.top =  Swt::Layout::FormAttachment.new(0, @toolbar_height.to_i)
         @left_composite.layout_data.top = Swt::Layout::FormAttachment.new(0, 5 + @toolbar_height.to_i)
         @right_composite.layout_data.top = Swt::Layout::FormAttachment.new(0, 5 + @toolbar_height.to_i)
-	@shell.layout        
+        @shell.layout
         @shell.redraw
       end
-      
+
     end
   end
 end

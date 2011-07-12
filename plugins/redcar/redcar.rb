@@ -16,11 +16,13 @@ module Redcar
   end
 
   def self.update_gui
+    result = nil
     Swt.sync_exec do
       safely do
-        yield
+        result = yield
       end
     end
+    result
   end
 
   class TimeoutError < StandardError; end
@@ -50,200 +52,99 @@ module Redcar
   end
 
   module Top
-    class QuitCommand < Command
+    class OpenNewEditTabCommand < Command
 
       def execute
-        check_for_modified_tabs_and_quit
-      end
-
-      private
-
-      def check_for_modified_tabs_and_quit
-        EditView::ModifiedTabsChecker.new(
-          Redcar.app.all_tabs.select {|t| t.is_a?(EditTab)},
-          "Save all before quitting?",
-          :none     => lambda { check_for_running_processes_and_quit },
-          :continue => lambda { check_for_running_processes_and_quit },
-          :cancel   => nil
-        ).check
-      end
-
-      def check_for_running_processes_and_quit
-        Runnables::RunningProcessChecker.new(
-          Redcar.app.all_tabs.select {|t| t.is_a?(HtmlTab)},
-          "Kill all and quit?",
-          :none     => lambda { Redcar.app.quit },
-          :continue => lambda { Redcar.app.quit },
-          :cancel   => nil
-        ).check
-      end
-    end
-
-    class NewCommand < Command
-
-      def execute
-        tab = win.new_tab(Redcar::EditTab)
+        unless win.nil?
+          tab = win.new_tab(Redcar::EditTab)
+        else
+          window = Redcar.app.new_window
+          tab = window.new_tab(Redcar::EditTab)
+        end
         tab.title = "untitled"
         tab.focus
         tab
       end
     end
 
-    class NewNotebookCommand < Command
-      sensitize :single_notebook
-
-      def execute
-        unless win.notebooks.length > 1
-          win.create_notebook
-        end
-      end
-    end
-
-    class NewWindowCommand < Command
-
-      def initialize(title=nil)
-        @title = title
+    class GenerateWindowsMenu < Command
+      def initialize(builder)
+        @builder = builder
       end
 
       def execute
-        window = Redcar.app.new_window
-        window.title = @title if @title
-      end
-    end
-
-    class CloseWindowCommand < Command
-      def initialize(window=nil)
-        @window = window
-      end
-
-      def execute
-        check_for_modified_tabs_and_close_window
-        quit_if_no_windows if [:linux, :windows].include?(Redcar.platform)
-        @window = nil
-      end
-
-      private
-
-      def quit_if_no_windows
-        if Redcar.app.windows.length == 0
-          if Application.storage['stay_resident_after_last_window_closed'] && !(ARGV.include?("--multiple-instance"))
-            puts 'continuing to run to wait for incoming drb connections later'
-          else
-            QuitCommand.new.run
+        window = Redcar.app.focussed_window
+        Redcar.app.windows.each do |win|
+          @builder.item(win.title, :type => :radio, :active => (win == window)) do
+            FocusWindowCommand.new(win).run
           end
         end
       end
-
-      def check_for_modified_tabs_and_close_window
-        EditView::ModifiedTabsChecker.new(
-          win.notebooks.map(&:tabs).flatten.select {|t| t.is_a?(EditTab)},
-          "Save all before closing the window?",
-          :none     => lambda { check_for_running_processes_and_close_window },
-          :continue => lambda { check_for_running_processes_and_close_window },
-          :cancel   => nil
-        ).check
-      end
-
-      def check_for_running_processes_and_close_window
-        Runnables::RunningProcessChecker.new(
-          win.notebooks.map(&:tabs).flatten.select {|t| t.is_a?(HtmlTab)},
-          "Kill them and close the window?",
-          :none     => lambda { win.close },
-          :continue => lambda { win.close },
-          :cancel   => nil
-        ).check
-      end
-
-      def win
-        @window || super
-      end
     end
 
-    class FocusWindowCommand < Command
-      def initialize(window=nil)
-        @window = window
+    class GenerateTabsMenu < Command
+      def initialize(builder)
+        @builder = builder
+      end
+
+      def trim(title)
+        title = title[0,13]+'...' if title.length > 13
+        title
       end
 
       def execute
-        win.focus
-        @window = nil
-      end
-
-      def win
-        @window || super
-      end
-    end
-
-    class RotateNotebooksCommand < Command
-      sensitize :multiple_notebooks
-
-      def execute
-        win.rotate_notebooks
-      end
-    end
-
-    class CloseNotebookCommand < Command
-      sensitize :multiple_notebooks
-
-      def execute
-        unless win.notebooks.length == 1
-          win.close_notebook
+        if win = Redcar.app.focussed_window and
+          book = win.focussed_notebook and book.tabs.any?
+          focussed_tab = book.focussed_tab
+          @builder.separator
+          @builder.item "Focussed Notebook", ShowTitle
+          book.tabs.each_with_index do |tab,i|
+            num = i + 1
+            if num < 10
+              @builder.item("Tab #{num}: #{trim(tab.title)}",
+                :type => :radio,
+                :active => (tab == focussed_tab),
+                :command => Redcar::Application.const_get("SelectTab#{num}Command")
+              )
+            else
+              @builder.item("Tab #{num}: #{trim(tab.title)}",
+                :type => :radio,
+                :active => (tab == focussed_tab)) { tab.focus }
+            end
+          end
+          if book = win.nonfocussed_notebook and book.tabs.any?
+            @builder.separator
+            @builder.item "Nonfocussed Notebook", ShowTitle
+            book.tabs.each_with_index do |tab,i|
+              @builder.item("Tab #{i+1}: #{trim(tab.title)}") {tab.focus}
+            end
+          end
         end
-      end
-    end
-
-    class SwitchNotebookCommand < Command
-      sensitize :multiple_notebooks, :other_notebook_has_tab
-
-      def execute
-        new_notebook = win.nonfocussed_notebook
-        if new_notebook.focussed_tab
-          new_notebook.focussed_tab.focus
-        end
-      end
-    end
-
-    class MoveTabToOtherNotebookCommand < Command
-      sensitize :multiple_notebooks, :open_tab
-
-      def execute
-        current_notebook = tab.notebook
-        target_notebook = win.notebooks.detect {|nb| nb != current_notebook}
-        target_notebook.grab_tab_from(current_notebook, tab)
-        tab.focus
-      end
-    end
-
-    class CloseTreeCommand < Command
-      def execute
-        treebook = Redcar.app.focussed_window.treebook
-        tree = treebook.focussed_tree
-        treebook.remove_tree(tree)
       end
     end
 
     class AboutCommand < Command
       def execute
-        new_tab = Top::NewCommand.new.run
+        new_tab = Top::OpenNewEditTabCommand.new.run
         new_tab.document.text = <<-TXT
 About: Redcar\nVersion: #{Redcar::VERSION}
 Ruby Version: #{RUBY_VERSION}
 Jruby version: #{JRUBY_VERSION}
 Redcar.environment: #{Redcar.environment}
         TXT
-        new_tab.title= 'About'
         new_tab.edit_view.reset_undo
         new_tab.document.set_modified(false)
+        new_tab.title= 'About'
       end
     end
 
     class ChangelogCommand < Command
       def execute
-        new_tab = Top::NewCommand.new.run
+        new_tab = Top::OpenNewEditTabCommand.new.run
         new_tab.document.text = File.read(File.join(File.dirname(__FILE__), "..", "..", "CHANGES"))
-        new_tab.title = 'Changes'
         new_tab.edit_view.reset_undo
         new_tab.edit_view.document.set_modified(false)
+        new_tab.title = 'Changes'
       end
     end
 
@@ -253,100 +154,12 @@ Redcar.environment: #{Redcar.environment}
       end
     end
 
-    class PrintScopeCommand < Command
+    class PrintScopeCommand < DocumentCommand
       def execute
         Application::Dialog.tool_tip(tab.edit_view.document.cursor_scope.gsub(" ", "\n"), :cursor)
       end
     end
 
-    class CloseTabCommand < TabCommand
-      def initialize(tab=nil)
-        @tab = tab
-      end
-
-      def tab
-        @tab || super
-      end
-
-      def execute
-        if tab.is_a?(EditTab)
-          if tab.edit_view.document.modified?
-            result = Application::Dialog.message_box(
-              "This tab has unsaved changes. \n\nSave before closing?",
-              :buttons => :yes_no_cancel
-            )
-            case result
-            when :yes
-              tab.edit_view.document.save!
-              close_tab
-            when :no
-              close_tab
-            when :cancel
-            end
-          else
-            close_tab
-          end
-        elsif tab.is_a?(HtmlTab)
-          if tab.html_view.controller and message = tab.html_view.controller.ask_before_closing
-            result = Application::Dialog.message_box(
-              message,
-              :buttons => :yes_no_cancel
-            )
-            case result
-            when :yes
-              close_tab
-            when :no
-              close_tab
-            when :cancel
-            end
-          else
-            close_tab
-          end
-        else
-          close_tab
-        end
-        @tab = nil
-      end
-
-      private
-
-      def close_tab
-        win = tab.notebook.window
-        tab.close
-        # this will break a lot of features:
-        #if win.all_tabs.empty? and not Project::Manager.in_window(win)
-        #  win.close
-        #end
-      end
-    end
-
-    class SwitchTabDownCommand < Command
-
-      def execute
-        win.focussed_notebook.switch_down
-      end
-    end
-
-    class SwitchTabUpCommand < Command
-
-      def execute
-        win.focussed_notebook.switch_up
-      end
-    end
-
-    class MoveTabUpCommand < Command
-
-      def execute
-        win.focussed_notebook.move_up
-      end
-    end
-
-    class MoveTabDownCommand < Command
-
-      def execute
-        win.focussed_notebook.move_down
-      end
-    end
 
     class UndoCommand < EditTabCommand
       sensitize :undoable
@@ -367,6 +180,10 @@ Redcar.environment: #{Redcar.environment}
     class MoveHomeCommand < DocumentCommand
 
       def execute
+        if doc.mirror.is_a?(Redcar::REPL::ReplMirror)
+          # do not do the default home command on a line with a prompt
+          return unless tab.go_to_home?
+        end
         line_ix = doc.line_at_offset(doc.cursor_offset)
         line    = doc.get_line(line_ix)
         prefix  = line[0...doc.cursor_line_offset]
@@ -407,11 +224,73 @@ Redcar.environment: #{Redcar.environment}
       end
     end
 
-    class MoveBottomCommand < DocumentCommand
+    class MoveNextLineCommand < DocumentCommand
+      def execute
+        doc = tab.edit_view.document
+        line_ix = doc.line_at_offset(doc.cursor_offset)
+        if line_ix == doc.line_count - 1
+          doc.cursor_offset = doc.length
+        else
+          doc.cursor_offset = doc.offset_at_line(line_ix + 1) - doc.delim.length
+        end
+        doc.ensure_visible(doc.cursor_offset)
+        doc.insert(doc.cursor_offset, "\n")
 
+      end
+    end
+
+    class MoveBottomCommand < DocumentCommand
       def execute
         doc.cursor_offset = doc.length
         doc.ensure_visible(doc.length)
+      end
+    end
+    
+    class MoveUpCommand < EditTabCommand
+      def execute
+        tab.edit_view.invoke_action(:LINE_UP)
+      end
+    end
+    
+    class MoveDownCommand < EditTabCommand
+      def execute
+        tab.edit_view.invoke_action(:LINE_DOWN)
+      end
+    end
+    
+    class ForwardCharCommand < DocumentCommand
+      def execute
+        doc.cursor_offset = [doc.cursor_offset + 1, doc.length].min
+      end
+    end
+    
+    class BackwardCharCommand < DocumentCommand
+      def execute
+        doc.cursor_offset = [doc.cursor_offset - 1, 0].max
+      end
+    end
+    
+    class OpenLineCommand < DocumentCommand
+      def execute
+        prev = doc.cursor_offset
+        doc.insert_at_cursor("\n")
+        doc.cursor_offset = prev
+      end
+    end
+
+    class DeleteCharCommand < DocumentCommand
+      def execute
+        if doc.cursor_offset < doc.length
+          doc.delete(doc.cursor_offset, 1)
+        end
+      end
+    end
+
+    class BackspaceCommand < DocumentCommand
+      def execute
+        if doc.cursor_offset > 0
+          doc.delete(doc.cursor_offset - 1, 1)
+        end
       end
     end
 
@@ -419,24 +298,27 @@ Redcar.environment: #{Redcar.environment}
       def execute
         doc.compound do
           doc.edit_view.delay_parsing do
-            if doc.selection?
-              first_line_ix = doc.line_at_offset(doc.selection_range.begin)
-              last_line_ix  = doc.line_at_offset(doc.selection_range.end)
-              if doc.selection_range.end == doc.offset_at_line(last_line_ix)
-                last_line_ix -= 1
-              end
-              first_line_ix.upto(last_line_ix) do |line_ix|
-                indent_line(doc, line_ix)
-              end
-              start_selection = doc.offset_at_line(first_line_ix)
-              if last_line_ix == doc.line_count - 1
-                end_selection = doc.length
+            indenters = edit_view.document.controllers(Redcar::AutoIndenter::DocumentController).first
+            indenters.disable do
+              if doc.selection?
+                first_line_ix = doc.line_at_offset(doc.selection_range.begin)
+                last_line_ix  = doc.line_at_offset(doc.selection_range.end)
+                if doc.selection_range.end == doc.offset_at_line(last_line_ix)
+                  last_line_ix -= 1
+                end
+                first_line_ix.upto(last_line_ix) do |line_ix|
+                  indent_line(doc, line_ix)
+                end
+                start_selection = doc.offset_at_line(first_line_ix)
+                if last_line_ix == doc.line_count - 1
+                  end_selection = doc.length
+                else
+                  end_selection = doc.offset_at_line(last_line_ix + 1)
+                end
+                doc.set_selection_range(start_selection, end_selection)
               else
-                end_selection = doc.offset_at_line(last_line_ix + 1)
+                indent_line(doc, doc.cursor_line)
               end
-              doc.set_selection_range(start_selection, end_selection)
-            else
-              indent_line(doc, doc.cursor_line)
             end
           end
         end
@@ -550,30 +432,34 @@ Redcar.environment: #{Redcar.environment}
         cursor_line  = doc.cursor_line
         cursor_line_offset = doc.cursor_line_offset
         diff = 0
-        doc.controllers(AutoIndenter::DocumentController).first.disable do
-          doc.selection_ranges.each do |range|
-            doc.delete(range.begin - diff, range.count)
-            diff += range.count
-          end
-          texts = Redcar.app.clipboard.last.dup
-          texts.each_with_index do |text, i|
-            line_ix = start_line + i
-            if line_ix == doc.line_count
-              doc.insert(doc.length, "\n" + " "*line_offset)
-            else
-              line = doc.get_line(line_ix).chomp
-              if line.length < line_offset
-                doc.insert(
-                doc.offset_at_inner_end_of_line(line_ix),
-                " "*(line_offset - line.length)
-                )
-              end
+        doc.controllers(AutoPairer::DocumentController).first.disable do
+          doc.controllers(AutoIndenter::DocumentController).first.disable do
+            doc.controllers(AutoCompleter::DocumentController).first.start_modification
+            doc.selection_ranges.each do |range|
+              doc.delete(range.begin - diff, range.count)
+              diff += range.count
             end
-            doc.insert(
-            doc.offset_at_line(line_ix) + line_offset,
-            text
-            )
-            doc.cursor_offset = doc.offset_at_line(line_ix) + line_offset + text.length
+            texts = Redcar.app.clipboard.last.dup
+            texts.each_with_index do |text, i|
+              line_ix = start_line + i
+              if line_ix == doc.line_count
+                doc.insert(doc.length, "\n" + " "*line_offset)
+              else
+                line = doc.get_line(line_ix).chomp
+                if line.length < line_offset
+                  doc.insert(
+                  doc.offset_at_inner_end_of_line(line_ix),
+                  " "*(line_offset - line.length)
+                  )
+                end
+              end
+              doc.insert(
+              doc.offset_at_line(line_ix) + line_offset,
+              text
+              )
+              doc.cursor_offset = doc.offset_at_line(line_ix) + line_offset + text.length
+            end
+            doc.controllers(AutoCompleter::DocumentController).first.end_modification
           end
         end
       end
@@ -599,6 +485,25 @@ Redcar.environment: #{Redcar.environment}
         doc.scroll_to_line(last_line_ix + 1)
       end
     end
+    
+    class TransposeCharactersCommand < Redcar::DocumentCommand
+      def execute
+        line        = doc.get_line(doc.cursor_line)
+        line_offset = doc.cursor_line_offset
+        
+        if line_offset > 0 and line.length >= 2
+          if line_offset < line.length - 1
+            first_char  = line.chars[line_offset - 1].to_s
+            second_char = line.chars[line_offset].to_s
+            doc.replace(doc.cursor_offset - 1, 2, second_char + first_char)
+          elsif line_offset == line.length - 1
+            first_char  = line.chars[line_offset - 2].to_s
+            second_char = line.chars[line_offset - 1].to_s
+            doc.replace(doc.cursor_offset - 2, 2, second_char + first_char)
+          end
+        end
+      end
+    end
 
     class SortLinesCommand < Redcar::DocumentCommand
 
@@ -607,28 +512,12 @@ Redcar.environment: #{Redcar.environment}
         cursor_ix = doc.cursor_offset
         if doc.selection?
           start_ix = doc.selection_range.begin
-          text = doc.selected_text                              
-    
+          text = doc.selected_text
+
           sorted_text = text.split("\n").sort().join("\n")
           doc.replace_selection(sorted_text)
           doc.cursor_offset = cursor_ix
         end
-      end
-    end
-    
-    class DialogExample < Redcar::Command
-      def execute
-      	builder = Menu::Builder.new do
-      	  item("Foo") { p :foo }
-      	  item("Bar") { p :bar }
-      	  separator
-      	  sub_menu "Baz" do
-      	    item("Qux") { p :qx }
-      	    item("Quux") { p :quux }
-      	    item("Corge") { p :corge }
-      	  end
-      	end
-      	win.popup_menu(builder.menu)
       end
     end
 
@@ -641,23 +530,22 @@ Redcar.environment: #{Redcar.environment}
 
         button :go, "Go", "Return" do
           new_line_ix = line.value.to_i - 1
-          if new_line_ix < doc.line_count and new_line_ix >= 0
-            doc.cursor_offset = doc.offset_at_line(new_line_ix)
-            doc.scroll_to_line(new_line_ix)
-            win.close_speedbar
+          if new_line_ix < @doc.line_count and new_line_ix >= 0
+            @doc.cursor_offset = @doc.offset_at_line(new_line_ix)
+            @doc.scroll_to_line(new_line_ix)
+            @win.close_speedbar
           end
         end
 
-        def initialize(command)
+        def initialize(command, win)
           @command = command
+          @doc     = command.doc
+          @win     = win
         end
-
-        def doc; @command.doc; end
-        def win; @command.send(:win); end
       end
 
       def execute
-        @speedbar = GotoLineCommand::Speedbar.new(self)
+        @speedbar = GotoLineCommand::Speedbar.new(self, win)
         win.open_speedbar(@speedbar)
       end
     end
@@ -667,16 +555,6 @@ Redcar.environment: #{Redcar.environment}
       def execute
         unless doc.single_line?
           doc.block_selection_mode = !doc.block_selection_mode?
-        end
-      end
-    end
-
-    # define commands from SelectTab1Command to SelectTab9Command
-    (1..9).each do |tab_num|
-      const_set("SelectTab#{tab_num}Command", Class.new(Redcar::Command)).class_eval do
-        define_method :execute do
-          notebook = Redcar.app.focussed_window_notebook
-          notebook.tabs[tab_num-1].focus if notebook.tabs[tab_num-1]
         end
       end
     end
@@ -693,21 +571,13 @@ Redcar.environment: #{Redcar.environment}
       end
     end
 
-    class ToggleToolbar < Command
-
-      def execute
-        Redcar.app.toggle_show_toolbar
-        Redcar.app.refresh_toolbar!
-      end
-    end
-
-    class SelectNewFont < Command
+    class SelectNewFont < EditTabCommand
       def execute
         Redcar::EditView::SelectFontDialog.new.open
       end
     end
 
-    class SelectTheme < Command
+    class SelectTheme < EditTabCommand
       def execute
         Redcar::EditView::SelectThemeDialog.new.open
       end
@@ -719,131 +589,98 @@ Redcar.environment: #{Redcar.environment}
       end
     end
 
-    class SelectFontSize < Command
+    class ShowTitle < Command
+      sensitize :always_disabled
+      def execute; end
+    end
+
+    class SelectFontSize < EditTabCommand
       def execute
-        result = Application::Dialog.input("Font Size", "Please enter new font size", Redcar::EditView.font_size.to_s) do |text|
-          if text.to_i  > 1 and text.to_i < 25
-            nil
+        max    = Redcar::EditView::MAX_FONT_SIZE
+        min    = Redcar::EditView::MIN_FONT_SIZE
+        result = Application::Dialog.input(
+          "Font Size",
+          "Please enter new font size",
+          Redcar::EditView.font_size.to_s)
+        if result[:button] == :ok
+          value = result[:value].to_i
+          if value >= min and value <= max
+            Redcar::EditView.font_size = value
           else
-            "the font size must be > 1 and < 25"
+            Application::Dialog.message_box(
+              "The font size must be between #{min} and #{max}")
           end
-      	end
-        Redcar::EditView.font_size = result[:value].to_i if result[:button ] == :ok
+        end
+      end
+    end
+
+    class IncreaseFontSize < EditTabCommand
+      def execute
+        unless (current = Redcar::EditView.font_size) >= Redcar::EditView::MAX_FONT_SIZE
+          Redcar::EditView.font_size = current+1
+        end
+      end
+    end
+
+    class DecreaseFontSize < EditTabCommand
+      def execute
+        unless (current = Redcar::EditView.font_size) <= Redcar::EditView::MIN_FONT_SIZE
+          Redcar::EditView.font_size = current-1
+        end
       end
     end
 
     def self.keymaps
       osx = Redcar::Keymap.build("main", :osx) do
-        link "Cmd+N",       NewCommand
-        link "Cmd+Shift+N", NewNotebookCommand
-        link "Cmd+Alt+N",   NewWindowCommand
-        link "Cmd+O",       Project::FileOpenCommand
+        link "Cmd+N",       OpenNewEditTabCommand
+        link "Cmd+Shift+N", Application::OpenNewNotebookCommand
+        link "Cmd+Alt+N",   Application::OpenNewWindowCommand
+        link "Cmd+O",       Project::OpenFileCommand
         link "Cmd+U",       Project::FileReloadCommand
         link "Cmd+Shift+O", Project::DirectoryOpenCommand
+        link "Cmd+Alt+Ctrl+P",   Project::FindRecentCommand
         #link "Cmd+Ctrl+O",  Project::OpenRemoteCommand
-        link "Cmd+S",       Project::FileSaveCommand
-        link "Cmd+Shift+S", Project::FileSaveAsCommand
-        link "Cmd+Ctrl+R",  Project::RevealInProjectCommand
-        link "Cmd+W",       CloseTabCommand
-        link "Cmd+Shift+W", CloseWindowCommand
-        link "Cmd+Q",       QuitCommand
+        link "Cmd+S",       Project::SaveFileCommand
+        link "Cmd+Shift+S", Project::SaveFileAsCommand
+        link "Cmd+W",       Application::CloseTabCommand
+        link "Cmd+Shift+W", Application::CloseWindowCommand
+        link "Alt+Shift+W", Application::CloseTreeCommand
+        link "Cmd+Q",       Application::QuitCommand
 
-        link "Cmd+Shift+E", EditView::InfoSpeedbarCommand
-        link "Cmd+Z",       UndoCommand
-        link "Cmd+Shift+Z", RedoCommand
-        link "Cmd+X",       CutCommand
-        link "Cmd+C",       CopyCommand
-        link "Cmd+V",       PasteCommand
-        link "Cmd+D",       DuplicateCommand
-
-        link "Home",        MoveTopCommand
-        link "Ctrl+A",      MoveHomeCommand
-        link "Ctrl+E",      MoveEndCommand
-        link "End",         MoveBottomCommand
-
-        link "Cmd+[",       DecreaseIndentCommand
-        link "Cmd+]",       IncreaseIndentCommand
-        link "Cmd+Shift+I", AutoIndenter::IndentCommand
-        link "Cmd+L",       GotoLineCommand
-        link "Cmd+F",       DocumentSearch::SearchForwardCommand
-        #link "Cmd+Shift+F", DocumentSearch::RepeatPreviousSearchForwardCommand
-        link "Cmd+Ctrl+F",  DocumentSearch::SearchAndReplaceCommand
-        link "Cmd+Shift+F", Redcar::FindInProject::OpenSearch
-        link "Cmd+A",       SelectAllCommand
-        link "Ctrl+W",      SelectWordCommand
-        link "Cmd+B",       ToggleBlockSelectionCommand
-        #link "Escape", AutoCompleter::AutoCompleteCommand
-        link "Ctrl+Escape",  AutoCompleter::MenuAutoCompleterCommand
-
-        link "Ctrl+U",       EditView::UpcaseTextCommand
-        link "Ctrl+Shift+U", EditView::DowncaseTextCommand
-        link "Ctrl+Alt+U",   EditView::TitlizeTextCommand
-        link "Ctrl+G",       EditView::OppositeCaseTextCommand
-        link "Ctrl+_",       EditView::CamelSnakePascalRotateTextCommand
-        link "Ctrl+=",       EditView::AlignAssignmentCommand
-
-        link "Cmd+T",           Project::FindFileCommand
-        link "Cmd+Shift+Alt+O", MoveTabToOtherNotebookCommand
-        link "Cmd+Alt+O",       SwitchNotebookCommand
-        link "Cmd+Shift+[",     SwitchTabDownCommand
-        link "Cmd+Shift+]",     SwitchTabUpCommand
-        link "Ctrl+Shift+[",    MoveTabDownCommand
-        link "Ctrl+Shift+]",    MoveTabUpCommand
-        link "Cmd+Alt+I",       ToggleInvisibles
-        link "Ctrl+R",          Runnables::RunEditTabCommand
-        link "Cmd+I",           OutlineView::OpenOutlineViewCommand
-
-        link "Ctrl+Shift+P",    PrintScopeCommand
-
-        link "Cmd+Shift+R",     PluginManagerUi::ReloadLastReloadedCommand
-
-        link "Cmd+Alt+S", Snippets::OpenSnippetExplorer
-        #Textmate.attach_keybindings(self, :osx)
-
-        # map SelectTab<number>Command
-        (1..9).each do |tab_num|
-          link "Cmd+#{tab_num}", Top.const_get("SelectTab#{tab_num}Command")
-        end
-
-      end
-
-      linwin = Redcar::Keymap.build("main", [:linux, :windows]) do
-        link "Ctrl+N",       NewCommand
-        link "Ctrl+Shift+N", NewNotebookCommand
-        link "Ctrl+Alt+N",   NewWindowCommand
-        link "Ctrl+O",       Project::FileOpenCommand
-        link "Ctrl+Shift+O", Project::DirectoryOpenCommand
-        #link "Alt+Shift+O",  Project::OpenRemoteCommand
-        link "Ctrl+S",       Project::FileSaveCommand
-        link "Ctrl+Shift+S", Project::FileSaveAsCommand
-        link "Ctrl+Shift+R", Project::RevealInProjectCommand
-        link "Ctrl+W",       CloseTabCommand
-        link "Ctrl+Shift+W", CloseWindowCommand
-        link "Ctrl+Q",       QuitCommand
+        #link "Cmd+Return",   MoveNextLineCommand
 
         link "Ctrl+Shift+E", EditView::InfoSpeedbarCommand
-        link "Ctrl+Z",       UndoCommand
-        link "Ctrl+Y",       RedoCommand
-        link "Ctrl+X",       CutCommand
-        link "Ctrl+C",       CopyCommand
-        link "Ctrl+V",       PasteCommand
-        link "Ctrl+D",       DuplicateCommand
+        link "Cmd+Z",        UndoCommand
+        link "Cmd+Shift+Z",  RedoCommand
+        link "Cmd+X",        CutCommand
+        link "Cmd+C",        CopyCommand
+        link "Cmd+V",        PasteCommand
+        link "Cmd+D",        DuplicateCommand
+        link "Ctrl+T",       TransposeCharactersCommand
 
-        link "Ctrl+Home",    MoveTopCommand
-        link "Home",         MoveHomeCommand
-        link "End",          MoveEndCommand
-        link "Ctrl+End",     MoveBottomCommand
+        link "Home",    MoveTopCommand
+        link "Ctrl+A",  MoveHomeCommand
+        link "Ctrl+E",  MoveEndCommand
+        link "End",     MoveBottomCommand
+        link "Ctrl+F",  ForwardCharCommand
+        link "Ctrl+B",  BackwardCharCommand
+        link "Ctrl+P",  MoveUpCommand
+        link "Ctrl+N",  MoveDownCommand
+        link "Ctrl+B",  BackwardCharCommand
+        link "Ctrl+O",  OpenLineCommand
+        link "Ctrl+D",  DeleteCharCommand
+        link "Ctrl+H",  BackspaceCommand
 
-        link "Ctrl+[",       DecreaseIndentCommand
-        link "Ctrl+]",       IncreaseIndentCommand
-        link "Ctrl+Shift+[", AutoIndenter::IndentCommand
-        link "Ctrl+L",       GotoLineCommand
-        link "Ctrl+F",       DocumentSearch::SearchForwardCommand
-        link "F3",           DocumentSearch::RepeatPreviousSearchForwardCommand
-        link "Ctrl+Shift+F", Redcar::FindInProject::OpenSearch
-        link "Ctrl+A",       SelectAllCommand
-        link "Ctrl+Alt+W",   SelectWordCommand
-        link "Ctrl+B",       ToggleBlockSelectionCommand
+        link "Cmd+[",            DecreaseIndentCommand
+        link "Cmd+]",            IncreaseIndentCommand
+        link "Cmd+Shift+I",      AutoIndenter::IndentCommand
+        link "Cmd+L",            GotoLineCommand
+        link "Cmd+A",            SelectAllCommand
+        link "Ctrl+W",           SelectWordCommand
+        link "Ctrl+L",           SelectLineCommand
+        link "Cmd+B",            ToggleBlockSelectionCommand
+        link "Escape",           AutoCompleter::AutoCompleteCommand
+        link "Ctrl+Escape",      AutoCompleter::MenuAutoCompleterCommand
         link "Ctrl+Space",       AutoCompleter::AutoCompleteCommand
         link "Ctrl+Shift+Space", AutoCompleter::MenuAutoCompleterCommand
 
@@ -853,30 +690,130 @@ Redcar.environment: #{Redcar.environment}
         link "Ctrl+G",       EditView::OppositeCaseTextCommand
         link "Ctrl+_",       EditView::CamelSnakePascalRotateTextCommand
         link "Ctrl+=",       EditView::AlignAssignmentCommand
+        link "Ctrl+Shift+^", SortLinesCommand
+
+        link "Cmd+T",           Project::FindFileCommand
+        link "Cmd+Shift+Alt+O", Application::MoveTabToOtherNotebookCommand
+        link "Cmd+Alt+O",       Application::SwitchNotebookCommand
+        link "Alt+Shift+[",     Application::SwitchTreeUpCommand
+        link "Alt+Shift+]",     Application::SwitchTreeDownCommand
+        link "Cmd+Shift+[",     Application::SwitchTabDownCommand
+        link "Cmd+Shift+]",     Application::SwitchTabUpCommand
+        link "Ctrl+Shift+[",    Application::MoveTabDownCommand
+        link "Ctrl+Shift+]",    Application::MoveTabUpCommand
+        link "Cmd+Shift++",     Application::ToggleFullscreen
+        link "Cmd+Shift+T",     Application::OpenTreeFinderCommand
+        link "Alt+Shift+J",     Application::IncreaseTreebookWidthCommand
+        link "Alt+Shift+H",     Application::DecreaseTreebookWidthCommand
+        link "Cmd+Shift+>",     Application::EnlargeNotebookCommand
+        link "Cmd+Shift+L",     Application::ResetNotebookWidthsCommand
+        link "Cmd+Shift+:",     Application::RotateNotebooksCommand
+        link "Alt+Shift+N",     Application::CloseNotebookCommand
+        link "Cmd+Alt+I",       ToggleInvisibles
+        link "Cmd++",           IncreaseFontSize
+        link "Cmd+-",           DecreaseFontSize
+
+        link "Ctrl+Shift+P", PrintScopeCommand
+        link "Cmd+Shift+H",  Application::ToggleTreesCommand
+
+        # link "Cmd+Shift+R",     PluginManagerUi::ReloadLastReloadedCommand
+
+        link "Cmd+Alt+S", Snippets::OpenSnippetExplorer
+        #Textmate.attach_keybindings(self, :osx)
+
+        # map SelectTab<number>Command
+        (1..9).each do |tab_num|
+          link "Cmd+#{tab_num}", Application.const_get("SelectTab#{tab_num}Command")
+        end
+
+      end
+
+      linwin = Redcar::Keymap.build("main", [:linux, :windows]) do
+        link "Ctrl+N",       OpenNewEditTabCommand
+        link "Ctrl+Shift+N", Application::OpenNewNotebookCommand
+        link "Ctrl+Alt+N",   Application::OpenNewWindowCommand
+        link "Ctrl+O",       Project::OpenFileCommand
+        link "Ctrl+Shift+O", Project::DirectoryOpenCommand
+        link "Ctrl+Alt+Shift+P",   Project::FindRecentCommand
+        #link "Alt+Shift+O",  Project::OpenRemoteCommand
+        link "Ctrl+S",       Project::SaveFileCommand
+        link "Ctrl+Shift+S", Project::SaveFileAsCommand
+        link "Ctrl+W",       Application::CloseTabCommand
+        link "Ctrl+Shift+W", Application::CloseWindowCommand
+        link "Alt+Shift+W",  Application::CloseTreeCommand
+        link "Ctrl+Q",       Application::QuitCommand
+
+        link "Ctrl+Enter",   MoveNextLineCommand
+
+        link "Ctrl+Shift+E", EditView::InfoSpeedbarCommand
+        link "Ctrl+Z",       UndoCommand
+        link "Ctrl+Y",       RedoCommand
+        link "Ctrl+X",       CutCommand
+        link "Ctrl+C",       CopyCommand
+        link "Ctrl+V",       PasteCommand
+        link "Ctrl+D",       DuplicateCommand
+
+        link "Ctrl+Home",  MoveTopCommand
+        link "Home",       MoveHomeCommand
+        link "Ctrl+Alt+A", MoveHomeCommand
+        link "End",        MoveEndCommand
+        link "Ctrl+Alt+E", MoveEndCommand
+        link "Ctrl+End",   MoveBottomCommand
+
+        link "Ctrl+[",           DecreaseIndentCommand
+        link "Ctrl+]",           IncreaseIndentCommand
+        link "Ctrl+Shift+[",     AutoIndenter::IndentCommand
+        link "Ctrl+L",           GotoLineCommand
+        link "Ctrl+A",           SelectAllCommand
+        link "Ctrl+Alt+W",       SelectWordCommand
+        link "Ctrl+Alt+L",       SelectLineCommand
+        link "Ctrl+B",           ToggleBlockSelectionCommand
+        link "Escape",           AutoCompleter::AutoCompleteCommand
+        link "Ctrl+Escape",      AutoCompleter::MenuAutoCompleterCommand
+        link "Ctrl+Space",       AutoCompleter::AutoCompleteCommand
+
+        link "Ctrl+Shift+Space", AutoCompleter::MenuAutoCompleterCommand
+
+        link "Ctrl+U",           EditView::UpcaseTextCommand
+        link "Ctrl+Shift+U",     EditView::DowncaseTextCommand
+        link "Ctrl+Alt+U",       EditView::TitlizeTextCommand
+        link "Ctrl+Alt+Shift+U", EditView::OppositeCaseTextCommand
+        link "Ctrl+_",           EditView::CamelSnakePascalRotateTextCommand
+        link "Ctrl+=",           EditView::AlignAssignmentCommand
+        link "Ctrl+Shift+^",     SortLinesCommand
 
         link "Ctrl+T",           Project::FindFileCommand
-        link "Ctrl+Shift+Alt+O", MoveTabToOtherNotebookCommand
+        link "Ctrl+Shift+Alt+O", Application::MoveTabToOtherNotebookCommand
 
-        link "Ctrl+R",           Runnables::RunEditTabCommand
+        link "Ctrl+Shift+P", PrintScopeCommand
 
-        link "Ctrl+Shift+P",    PrintScopeCommand
-
-        link "Ctrl+Alt+O",       SwitchNotebookCommand
-
-        link "Ctrl+Page Up",         SwitchTabDownCommand
-        link "Ctrl+Page Down",       SwitchTabUpCommand
-        link "Ctrl+Shift+Page Up",   MoveTabDownCommand
-        link "Ctrl+Shift+Page Down", MoveTabUpCommand
-        link "Ctrl+Shift+R",     PluginManagerUi::ReloadLastReloadedCommand
-        link "Ctrl+Alt+I",       ToggleInvisibles
-        link "Ctrl+I",           OutlineView::OpenOutlineViewCommand
+        link "Ctrl+Alt+O",           Application::SwitchNotebookCommand
+        link "Ctrl+Shift+H",         Application::ToggleTreesCommand
+        link "Alt+Page Up",          Application::SwitchTreeUpCommand
+        link "Alt+Page Down",        Application::SwitchTreeDownCommand
+        link "Ctrl+Page Up",         Application::SwitchTabDownCommand
+        link "Ctrl+Page Down",       Application::SwitchTabUpCommand
+        link "Ctrl+Shift+Page Up",   Application::MoveTabDownCommand
+        link "Ctrl+Shift+Page Down", Application::MoveTabUpCommand
+        link "Ctrl+Shift+T",         Application::OpenTreeFinderCommand
+        link "Alt+Shift+J",          Application::IncreaseTreebookWidthCommand
+        link "Alt+Shift+H",          Application::DecreaseTreebookWidthCommand
+        link "Ctrl+Shift+>",         Application::EnlargeNotebookCommand
+        link "Ctrl+Shift+L",         Application::ResetNotebookWidthsCommand
+        link "Ctrl+Shift+:",         Application::RotateNotebooksCommand
+        link "Alt+Shift+N",          Application::CloseNotebookCommand
+        link "F11",                  Application::ToggleFullscreen
+        link "Ctrl+Alt+I",           ToggleInvisibles
+        link "Ctrl++",               IncreaseFontSize
+        link "Ctrl+-",               DecreaseFontSize
 
         link "Ctrl+Alt+S", Snippets::OpenSnippetExplorer
+
         #Textmate.attach_keybindings(self, :linux)
 
         # map SelectTab<number>Command
         (1..9).each do |tab_num|
-          link "Alt+#{tab_num}", Top.const_get("SelectTab#{tab_num}Command")
+          link "Alt+#{tab_num}", Application.const_get("SelectTab#{tab_num}Command")
         end
 
       end
@@ -886,39 +823,42 @@ Redcar.environment: #{Redcar.environment}
 
     def self.toolbars
       ToolBar::Builder.build do
-        item "New File", :command => NewCommand, :icon => :new, :barname => :core
-        item "Open File", :command => Project::FileOpenCommand, :icon => :open, :barname => :core
+        item "New File", :command => OpenNewEditTabCommand, :icon => :new, :barname => :core
+        item "Open File", :command => Project::OpenFileCommand, :icon => :open, :barname => :core
         item "Open Directory", :command => Project::DirectoryOpenCommand, :icon => :open_dir, :barname => :core
-        item "Save File", :command => Project::FileSaveCommand, :icon => :save, :barname => :core
-        item "Save File As", :command => Project::FileSaveAsCommand, :icon => :save_as, :barname => :core
+        item "Save File", :command => Project::SaveFileCommand, :icon => :save, :barname => :core
+        item "Save File As", :command => Project::SaveFileAsCommand, :icon => :save_as, :barname => :core
         item "Undo", :command => UndoCommand, :icon => :undo, :barname => :core
         item "Redo", :command => RedoCommand, :icon => :redo, :barname => :core
-        item "New Notebook", :command => NewNotebookCommand, :icon => File.join(Redcar::ICONS_DIRECTORY, "book--plus.png"), :barname => :edit
-        item "Close Notebook", :command => CloseNotebookCommand, :icon => File.join(Redcar::ICONS_DIRECTORY, "book--minus.png"), :barname => :edit
+        item "New Notebook", :command => Application::OpenNewNotebookCommand, :icon => File.join(Redcar::ICONS_DIRECTORY, "book--plus.png"), :barname => :edit
+        item "Close Notebook", :command => Application::CloseNotebookCommand, :icon => File.join(Redcar::ICONS_DIRECTORY, "book--minus.png"), :barname => :edit
       end
-
     end
 
-    def self.menus
+
+    def self.menus(window)
       Menu::Builder.build do
         sub_menu "File", :priority => :first do
           group(:priority => :first) do
-            item "New", NewCommand
-            item "New Window", NewWindowCommand
+            item "New", OpenNewEditTabCommand
+            item "New Window", Application::OpenNewWindowCommand
           end
 
           group(:priority => 10) do
             separator
-            item "Close Tab", CloseTabCommand
-            item "Close Tree", CloseTreeCommand
-            item "Close Window", CloseWindowCommand
+            item "Close Tab", Application::CloseTabCommand
+            item "Close Tree", Application::CloseTreeCommand
+            item "Close Window", Application::CloseWindowCommand
+            item "Close Others", Application::CloseOthers
+            item "Close All", Application::CloseAll
           end
 
           group(:priority => :last) do
             separator
-            item "Quit", QuitCommand
+            item "Quit", Application::QuitCommand
           end
         end
+        
         sub_menu "Edit", :priority => 5 do
           group(:priority => :first) do
             item "Tab Info",  EditView::InfoSpeedbarCommand
@@ -949,7 +889,7 @@ Redcar.environment: #{Redcar.environment}
               item "Toggle Block Selection", ToggleBlockSelectionCommand
             end
           end
-          
+
           group(:priority => 40) do
             sub_menu "Document Navigation" do
               item "Goto Line", GotoLineCommand
@@ -957,6 +897,20 @@ Redcar.environment: #{Redcar.environment}
               item "Home",    MoveHomeCommand
               item "End",     MoveEndCommand
               item "Bottom",  MoveBottomCommand
+              
+              separator
+              
+              item "Forward Character",  ForwardCharCommand
+              item "Backward Character", BackwardCharCommand
+              item "Previous Line",      MoveUpCommand
+              item "Next Line",          MoveDownCommand
+              item "Open Line",          OpenLineCommand
+              
+              separator
+              
+              item "Delete Character",   DeleteCharCommand
+              item "Backspace",          BackspaceCommand
+              item "Transpose",          TransposeCharactersCommand
             end
           end
 
@@ -972,36 +926,66 @@ Redcar.environment: #{Redcar.environment}
           group(:priority => 10) do
             item "Task Manager", TaskManager::OpenCommand
             separator
-            #item "Print Scope Tree", PrintScopeTreeCommand
+            item "Print Scope Tree", PrintScopeTreeCommand
             item "Print Scope at Cursor", PrintScopeCommand
           end
         end
         sub_menu "View", :priority => 30 do
-          sub_menu "Appearance" do
-            item "Font", SelectNewFont
-            item "Font Size", SelectFontSize
-            item "Theme", SelectTheme
+          sub_menu "Appearance", :priority => 5 do
+            item "Select Theme", SelectTheme
+            separator
+            item "Select Font" , SelectNewFont
+            item "Select Font Size"  , SelectFontSize
+            item "Increase Font Size", IncreaseFontSize
+            item "Decrease Font Size", DecreaseFontSize
           end
-          separator
-          item "New Notebook", NewNotebookCommand
-          item "Close Notebook", CloseNotebookCommand
-          item "Rotate Notebooks", RotateNotebooksCommand
-          item "Move Tab To Other Notebook", MoveTabToOtherNotebookCommand
-          item "Switch Notebooks", SwitchNotebookCommand
-          separator
-          item "Previous Tab", SwitchTabDownCommand
-          item "Next Tab", SwitchTabUpCommand
-          item "Move Tab Left", MoveTabDownCommand
-          item "Move Tab Right", MoveTabUpCommand
-          sub_menu "Switch Tab" do
-             (1..9).each do |num|
-               item "Tab #{num}", Top.const_get("SelectTab#{num}Command")
-             end
+          group(:priority => 10) do
+            separator
+            item "Toggle Fullscreen", :command => Application::ToggleFullscreen, :type => :check, :active => window ? window.fullscreen : false
           end
-          separator
-          item "Show Toolbar", :command => ToggleToolbar, :type => :check, :active => Redcar.app.show_toolbar?
-          item "Show Invisibles", :command => ToggleInvisibles, :type => :check, :active => EditView.show_invisibles?
-          item "Show Line Numbers", :command => ToggleLineNumbers, :type => :check, :active => EditView.show_line_numbers?
+          group(:priority => 15) do
+            separator
+            sub_menu "Trees" do
+              item "Open Tree Finder", Application::OpenTreeFinderCommand
+              item "Toggle Tree Visibility", Application::ToggleTreesCommand
+              item "Increase Tree Width", Application::IncreaseTreebookWidthCommand
+              item "Decrease Tree Width", Application::DecreaseTreebookWidthCommand
+              separator
+              item "Previous Tree", Application::SwitchTreeUpCommand
+              item "Next Tree", Application::SwitchTreeDownCommand
+            end
+            lazy_sub_menu "Windows" do
+              GenerateWindowsMenu.new(self).run
+            end
+            sub_menu "Notebooks" do
+              item "New Notebook", Application::OpenNewNotebookCommand
+              item "Close Notebook", Application::CloseNotebookCommand
+              item "Rotate Notebooks", Application::RotateNotebooksCommand
+              item "Move Tab To Other Notebook", Application::MoveTabToOtherNotebookCommand
+              item "Switch Notebooks", Application::SwitchNotebookCommand
+              separator
+              item "Enlarge First Notebook", Application::EnlargeNotebookCommand
+              item "Reset Notebook Widths",  Application::ResetNotebookWidthsCommand
+            end
+            sub_menu "Tabs" do
+              item "Previous Tab",   Application::SwitchTabDownCommand
+              item "Next Tab",       Application::SwitchTabUpCommand
+              item "Move Tab Left",  Application::MoveTabDownCommand
+              item "Move Tab Right", Application::MoveTabUpCommand
+              separator
+              # GenerateTabsMenu.new(self).run # TODO: find a way to maintain keybindings with lazy menus
+              item "Focussed Notebook", ShowTitle
+              (1..9).each do |num|
+                item "Tab #{num}", Application.const_get("SelectTab#{num}Command")
+              end
+            end
+          end
+          group(:priority => :last) do
+            separator
+            item "Show Toolbar", :command => Application::ToggleToolbar, :type => :check, :active => Redcar.app.show_toolbar?
+            item "Show Invisibles", :command => ToggleInvisibles, :type => :check, :active => EditView.show_invisibles?
+            item "Show Line Numbers", :command => ToggleLineNumbers, :type => :check, :active => EditView.show_line_numbers?
+          end
         end
         sub_menu "Bundles", :priority => 45 do
           group(:priority => :first) do
@@ -1015,7 +999,7 @@ Redcar.environment: #{Redcar.environment}
           end
         end
         sub_menu "Help", :priority => :last do
-          group(:priority => :first) do
+          group(:priority => :last) do
             item "About", AboutCommand
             item "New In This Version", ChangelogCommand
           end
@@ -1029,19 +1013,19 @@ Redcar.environment: #{Redcar.environment}
       end
 
       def tab_close(tab)
-        CloseTabCommand.new(tab).run
+        Application::CloseTabCommand.new(tab).run
       end
 
       def window_close(win)
-        CloseWindowCommand.new(win).run
+        Application::CloseWindowCommand.new(win).run
       end
 
       def application_close(app)
-        QuitCommand.new.run
+        Application::QuitCommand.new.run
       end
 
       def window_focus(win)
-        FocusWindowCommand.new(win).run
+        Application::FocusWindowCommand.new(win).run
       end
     end
 
@@ -1050,35 +1034,40 @@ Redcar.environment: #{Redcar.environment}
     end
 
     def self.start(args=[])
-      puts "loading plugins took #{Time.now - PROCESS_START_TIME}"
-      Redcar.update_gui do
-        Application.start
-        ApplicationSWT.start
-        Swt.splash_screen.inc(1) if Swt.splash_screen
-        EditViewSWT.start
-        Swt.splash_screen.inc(7) if Swt.splash_screen
-        s = Time.now
-        if Redcar.gui
-          Redcar.app.controller = ApplicationSWT.new(Redcar.app)
+      begin
+        Redcar.log.info("startup milestone: loading plugins took #{Time.now - Redcar.process_start_time}")
+        Redcar.update_gui do
+          Application.start
+          ApplicationSWT.start
+          EditViewSWT.start
+          Swt.splash_screen.inc(1) if Swt.splash_screen
+          s = Time.now
+          if Redcar.gui
+            Redcar.app.controller = ApplicationSWT.new(Redcar.app)
+          end
+          Redcar.app.refresh_menu!
+          Redcar.app.load_sensitivities
+          Redcar.log.info("initializing gui took #{Time.now - s}s")
         end
-        Redcar.app.refresh_menu!
-        Redcar.app.load_sensitivities
-        puts "initializing gui took #{Time.now - s}s"
-      end
-      Redcar.update_gui do
-        Swt.splash_screen.inc(2) if Swt.splash_screen
-        s = Time.now
-        Redcar::Project::Manager.start(args)
-        puts "project start took #{Time.now - s}s"
-        Redcar.app.make_sure_at_least_one_window_open
-      end
-      Redcar.update_gui do
-        Swt.splash_screen.close if Swt.splash_screen
-      end
-      puts "start time: #{Time.now - $redcar_process_start_time}"
-      if args.include?("--compute-textmate-cache-and-quit")
-        Redcar::Textmate.all_bundles
-        exit
+        Redcar.update_gui do
+          Swt.splash_screen.close if Swt.splash_screen
+          win = Redcar.app.make_sure_at_least_one_window_open
+          win.close if win and args.include?("--no-window")
+          Redcar.log.info("startup milestone: window open #{Time.now - Redcar.process_start_time}")
+          Redcar::Project::Manager.start(args)
+          Redcar.log.info("startup milestone: project open #{Time.now - Redcar.process_start_time}")
+        end
+        Redcar.load_useful_libraries
+        Redcar.log.info("startup milestone: complete: #{Time.now - Redcar.process_start_time}")
+        if args.include?("--compute-textmate-cache-and-quit")
+          Redcar::Textmate.all_bundles
+          exit
+        end
+      rescue => e
+        Redcar.log.error("error in startup: #{e.inspect}")
+        e.backtrace.each do |line|
+          Redcar.log.error(line)
+        end
       end
     end
   end

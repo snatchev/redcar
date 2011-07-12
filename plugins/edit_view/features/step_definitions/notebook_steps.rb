@@ -1,6 +1,8 @@
 
 module NotebookSwtHelper
   def notebook_sash
+    Redcar.app.show_toolbar = false
+    Redcar.app.refresh_toolbar!
     active_shell.children.to_a.last.children.to_a[0]
   end
   
@@ -14,26 +16,19 @@ end
 World(NotebookSwtHelper)
 
 When /^I make a new notebook$/ do
-  Redcar::Top::NewNotebookCommand.new.run
+  Redcar::Application::OpenNewNotebookCommand.new.run
 end
 
 When /^I move the tab to the other notebook$/ do
-  Redcar::Top::MoveTabToOtherNotebookCommand.new.run
+  Redcar::Application::MoveTabToOtherNotebookCommand.new.run
 end
 
 When /^I close the current notebook$/ do
-  Redcar::Top::CloseNotebookCommand.new.run
+  Redcar::Application::CloseNotebookCommand.new.run
 end
 
 When /^I switch notebooks$/ do
-  Redcar::Top::SwitchNotebookCommand.new.run
-end
-
-When /^I focus on the edit_view in the tab in notebook (\d)$/ do |index|
-  index = index.to_i - 1
-  notebook = Redcar.app.windows.first.notebooks[index]
-  edit_view = notebook.focussed_tab.edit_view
-  edit_view.controller.swt_focus_gained
+  Redcar::Application::SwitchNotebookCommand.new.run
 end
 
 Then /^there should be (one|two) notebooks?$/ do |count_str|

@@ -1,10 +1,14 @@
-REDCAR_VERSION = "0.8.0dev" # also change in lib/redcar.rb!
-require 'rubygems'
+require 'bundler'
+REDCAR_VERSION = "0.12.0dev" # also change in lib/redcar.rb!
 require 'fileutils'
+
+# explitely use rspec < 2.0
+gem 'rspec', '<2.0'
 require 'spec/rake/spectask'
 require 'cucumber/rake/task'
 require "rake/gempackagetask"
 require "rake/rdoctask"
+Dir[File.expand_path("../tasks/*.rake", __FILE__)].each { |f| load f }
 
 if RUBY_PLATFORM =~ /mswin|mingw/
   begin
@@ -14,6 +18,15 @@ if RUBY_PLATFORM =~ /mswin|mingw/
     ARGV << "--nocolour"
   end
 end
+
+### GETTING STARTED IN DEVELOPMENT
+
+desc "Prepare code base for development"
+task :initialise do
+  sh "git submodule update --init --recursive"
+end
+
+task :initialize => :initialise
 
 ### DOCUMENTATION
 
@@ -28,7 +41,7 @@ begin
         'plugins/*/lib/**/*.rb'
       ]
     t.options = ['--markup', 'markdown']
-  end  
+  end
 rescue LoadError
 end
 
@@ -40,52 +53,105 @@ task :release_docs do
   sh "rsync -e 'ssh -p #{port}' -avz doc/ danlucraft.com:#{docs_dir}/latest/"
 end
 
+def jruby_run(cmd)
+  opts = "-J-XstartOnFirstThread" if Config::CONFIG["host_os"] =~ /darwin/
+  sh("jruby --debug #{opts} -S #{cmd}; echo 'done'")
+end
+
 ### CI
-task :ci => [:specs_ci, :cucumber_ci]
+namespace :ci do
+  def rspec(options = "")
+    files = Dir['plugins/*/spec/*/*_spec.rb'] + Dir['plugins/*/spec/*/*/*_spec.rb'] + Dir['plugins/*/spec/*/*/*/*_spec.rb']
+    rspec_opts = "#{options} -c #{files.join(" ")}"
+    "$GEM_HOME/bin/spec #{rspec_opts}"
+  end
 
-def find_ci_reporter(filename)
-  jruby_gem_path = %x[jruby -rubygems -e "p Gem.path.first"].gsub("\n", "").gsub('"', "")
-  result = Dir.glob("#{jruby_gem_path}/gems/ci_reporter-*/lib/ci/reporter/rake/#{filename}.rb").reverse.first
-  result || raise("Could not find ci_reporter gem in #{jruby_gem_path}")
+  def cucumber(options = "")
+    "bin/cucumber #{options} plugins/*/features"
+  end
+
+  namespace :rcov do
+    COVERAGE_DATA = "coverage.data"
+
+    def rcov_run(cmd, opts)
+      excluded_files = "jsignal_internal,(erb),features/,spec/,vendor/,openssl/,yaml/,json/,yaml,gems,file:,(eval),(__FORWARDABLE__)"
+      cmd = %{rcov --aggregate #{COVERAGE_DATA} -x "#{excluded_files}" #{cmd} -- #{opts}}
+      jruby_run(cmd)
+    end
+
+    desc "Run the coverage task for specs"
+    task :specs do
+      cmd = rspec
+      cmd, opts = cmd.split.first, cmd.split[1..-1].join(" ")
+      rcov_run(cmd, opts)
+    end
+
+    desc "Run the coverage task for features"
+    task :cucumber do
+      cmd = cucumber
+      cmd, opts = cmd.split.first, cmd.split[1..-1].join(" ")
+      rcov_run(cmd, opts)
+    end
+  end
+
+  desc "Run the coverage task"
+  task :rcov do
+    FileUtils.rm COVERAGE_DATA if File.exist?(COVERAGE_DATA)
+    Rake::Task["ci:rcov:specs"].invoke
+    Rake::Task["ci:rcov:cucumber"].invoke
+  end
+  
+  def find_ci_reporter(filename)
+    jruby_gem_path = %x[jruby -rubygems -e "p Gem.path.first"].gsub("\n", "").gsub('"', "")
+    result = Dir.glob("#{jruby_gem_path}/gems/ci_reporter-*/lib/ci/reporter/rake/#{filename}.rb").reverse.first
+    result || raise("Could not find ci_reporter gem in #{jruby_gem_path}")
+  end
+
+  desc "Run the specs with JUnit output for the Hudson reporter"
+  task :specs do
+    rspec_loader = find_ci_reporter "rspec_loader"
+    rspec_opts = "--require #{rspec_loader} --format CI::Reporter::RSpec"
+    jruby_run(rspec(rspec_opts))
+  end
+  
+  desc "Run the features with JUnit output for the Hudson reporter"
+  task :cucumber do
+    reports_folder = "features/reports"
+    FileUtils.rm_rf reports_folder if File.exist? reports_folder
+    jruby_run(cucumber("-f progress -f junit --out #{reports_folder}"))
+  end
 end
 
-task :specs_ci do
-  rspec_loader = find_ci_reporter "rspec_loader"  
-  files = Dir['plugins/*/spec/*/*_spec.rb'] + Dir['plugins/*/spec/*/*/*_spec.rb'] + Dir['plugins/*/spec/*/*/*/*_spec.rb']
-  opts = "-J-XstartOnFirstThread" if Config::CONFIG["host_os"] =~ /darwin/
-  opts = "#{opts} -S spec --require #{rspec_loader} --format CI::Reporter::RSpec -c #{files.join(" ")}"
-  sh("jruby #{opts} && echo 'done'")
+desc "Run specs and features with JUnit output"
+task :ci do
+  Rake::Task["ci:specs"].invoke
+  Rake::Task["ci:cucumber"].invoke
 end
 
-task :cucumber_ci do  
-  opts = "-J-XstartOnFirstThread" if Config::CONFIG["host_os"] =~ /darwin/
-  opts = "#{opts} bin/cucumber --guess -f progress -f junit --out features/reports/ plugins/*/features"
-  sh("jruby #{opts} && echo 'done'")
-end
 
 ### TESTS
 
 desc "Run all specs and features"
 task :default => ["specs", "cucumber"]
 
+desc "Run all specs"
 task :specs do
   files = Dir['plugins/*/spec/*/*_spec.rb'] + Dir['plugins/*/spec/*/*/*_spec.rb'] + Dir['plugins/*/spec/*/*/*/*_spec.rb']
   case Config::CONFIG["host_os"]
   when "darwin"
-    sh("jruby -J-XstartOnFirstThread -S spec -c #{files.join(" ")} && echo 'done'")
+    sh("jruby -J-XstartOnFirstThread -S bundle exec spec -c #{files.join(" ")} && echo 'done'")
   else
-    sh("jruby -S spec -c #{files.join(" ")} && echo 'done'")
+    sh("jruby -S bundle exec spec -c #{files.join(" ")} && echo 'done'")
   end
 end
 
-desc "Run features"
+desc "Run all features"
 task :cucumber do
-  case Config::CONFIG["host_os"]
-  when "darwin"
-    sh("jruby -J-XstartOnFirstThread bin/cucumber -cf progress plugins/*/features && echo 'done'")
-  else
-    sh("jruby bin/cucumber -cf progress plugins/*/features && echo 'done'")
-  end
+  cmd = "jruby "
+  cmd << "-J-XstartOnFirstThread " if Config::CONFIG["host_os"] =~ /darwin/
+  all_feature_dirs = Dir['plugins/*/features'] # overcome a jruby windows bug http://jira.codehaus.org/browse/JRUBY-4527
+  cmd << "bin/cucumber -cf progress -e \".*fixtures.*\" #{all_feature_dirs.join(' ')}"
+  sh("#{cmd} && echo 'done'")
 end
 
 ### BUILD AND RELEASE
@@ -98,6 +164,8 @@ task :build do
   cd "plugins/application_swt" do
     sh "ant"
   end
+  cp "plugins/edit_view_swt/vendor/java-mateview.jar", "#{ENV['HOME']}/.redcar/assets/java-mateview-#{REDCAR_VERSION}.jar"
+  cp "plugins/application_swt/lib/dist/application_swt.jar", "#{ENV['HOME']}/.redcar/assets/application_swt-#{REDCAR_VERSION}.jar"
 end
 
 def remove_gitignored_files(filelist)
@@ -112,7 +180,22 @@ def remove_matching_files(list, string)
   list.reject {|entry| entry.include?(string)}
 end
 
-spec = Gem::Specification.new do |s|
+def gem_manifest
+  r = %w(CHANGES LICENSE Rakefile README.md) +
+                          Dir.glob("bin/redcar") +
+                          Dir.glob("config/**/*") +
+                          Dir.glob("share/**/*") +
+                          remove_gitignored_files(Dir.glob("lib/**/*")) +
+                          remove_matching_files(remove_gitignored_files(Dir.glob("plugins/**/*")), "redcar-bundles") +
+                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/Syntaxes/**/*") +
+                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/Preferences/**/*") +
+                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/Snippets/**/*") +
+                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/info.plist") +
+                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Themes/*.tmTheme")
+  remove_matching_files(r, "multi-byte")
+end
+
+Spec = spec = Gem::Specification.new do |s|
   s.name              = "redcar"
   s.version           = REDCAR_VERSION
   s.summary           = "A JRuby text editor."
@@ -123,20 +206,8 @@ spec = Gem::Specification.new do |s|
   s.has_rdoc          = true
   s.extra_rdoc_files  = %w(README.md)
   s.rdoc_options      = %w(--main README.md)
-
   
-  
-  s.files             = %w(CHANGES LICENSE Rakefile README.md) + 
-                          Dir.glob("bin/redcar") + 
-                          Dir.glob("config/**/*") + 
-                          Dir.glob("share/**/*") + 
-                          remove_gitignored_files(Dir.glob("lib/**/*")) + 
-                          remove_matching_files(remove_gitignored_files(Dir.glob("plugins/**/*")), "redcar-bundles") + 
-                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/Syntaxes/**/*") + 
-                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/Preferences/**/*") + 
-                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/Snippets/**/*") + 
-                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Bundles/*.tmbundle/info.plist") + 
-                          Dir.glob("plugins/textmate/vendor/redcar-bundles/Themes/*.tmTheme")
+  s.files             = gem_manifest
   s.executables       = FileList["bin/redcar"].map { |f| File.basename(f) }
    
   s.require_paths     = ["lib"]
@@ -149,84 +220,15 @@ spec = Gem::Specification.new do |s|
   
   s.post_install_message = <<TEXT
 
--------------------------------------------------------------------------------
-
-Please now run:
+To complete setup you need to have an active network connection and run:
 
   $ redcar install
-
-to complete the installation. (NB. do NOT use sudo. In previous versions,
-sudo was required for this step, but now it should be run as the user.)
-
-NB. This will download jars that Redcar needs to run from the internet.
-It will put them into ~/.redcar/assets.
-
--------------------------------------------------------------------------------
 
 TEXT
 end
 
 Rake::GemPackageTask.new(spec) do |pkg|
   pkg.gem_spec = spec
-end
-
-desc "Build a MacOS X App bundle"
-task :app_bundle => :build do
-  require 'erb'
-
-  redcar_icon = "redcar_icon_beta.png"
-
-  bundle_contents = File.join("pkg", "Redcar.app", "Contents")
-  FileUtils.rm_rf bundle_contents if File.exist? bundle_contents
-  macos_dir = File.join(bundle_contents, "MacOS")
-  resources_dir = File.join(bundle_contents, "Resources")
-  FileUtils.mkdir_p macos_dir
-  FileUtils.mkdir_p resources_dir
-
-  info_plist_template = ERB.new <<-PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleExecutable</key>
-	<string>redcar</string>
-	<key>CFBundleIconFile</key>
-	<string><%= redcar_icon %></string>
-	<key>CFBundleIdentifier</key>
-	<string>com.redcareditor.Redcar</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleSignature</key>
-	<string>????</string>
-	<key>CFBundleVersion</key>
-	<string><%= spec.version %></string>
-	<key>LSMinimumSystemVersion</key>
-	<string>10.5</string>
-</dict>
-</plist>
-  PLIST
-  File.open(File.join(bundle_contents, "Info.plist"), "w") do |f|
-    f << info_plist_template.result(binding)
-  end
-
-  File.open(File.join(macos_dir, "redcar"), "w") do |f|
-    f << '#!/bin/sh
-          DIR=$(cd "$(dirname "$0")"; pwd)
-          REDCAR=$(cd "$(dirname "${DIR}/../Resources/bin/redcar")"; pwd)
-          $REDCAR/redcar install
-          $REDCAR/redcar --ignore-stdin $@'
-  end
-  File.chmod 0777, File.join(macos_dir, "redcar")
-
-  spec.files.each do |f|
-    FileUtils.mkdir_p File.join(resources_dir, File.dirname(f))
-    FileUtils.cp_r f, File.join(resources_dir, f), :remove_destination => true
-  end
-
-  FileUtils.cp_r File.join(resources_dir, "plugins", "application", "icons", redcar_icon), 
-      resources_dir, :remove_destination => true
 end
 
 desc 'Run a watchr continuous integration daemon for the specs'
@@ -238,7 +240,7 @@ task :run_ci do
       a = "jruby -S spec #{filename} --backtrace"
       puts a
       system a
-    end  
+    end
   
     spec_filename = "#{filename[1]}_spec.rb"
     spec = Dir["**/#{spec_filename}"]
@@ -269,6 +271,7 @@ task :release => :gem do
   }
   
   s3_uploads.each do |source, target|
+    p [source, target]
     AWS::S3::S3Object.store(target, open(source), 'redcar', :access => :public_read)
   end
 end
@@ -293,13 +296,13 @@ namespace :redcar do
     
     tasks = Rake::Task.tasks
     runnables = []
-    ruby_bin = Config::CONFIG["bindir"] + "/ruby -r#{File.dirname(__FILE__)}/.redcar/runnables/sync_stdout.rb " 
+    ruby_bin = Config::CONFIG["bindir"] + "/ruby -r#{File.dirname(__FILE__)}/.redcar/runnables/sync_stdout.rb "
     tasks.each do |task|
       name = task.name.gsub(":", "/")
       command = ruby_bin + $0 + " " + task.name
       runnables << {
         "name"        => name,
-        "command"     => command, 
+        "command"     => command,
         "description" => task.comment,
         "type"        => "task/ruby/rake"
       }
@@ -309,7 +312,7 @@ namespace :redcar do
       f.puts(JSON.pretty_generate(data))
     end
     File.open(".redcar/runnables/ruby.json", "w") do |f|
-      data = {"file_runners" => 
+      data = {"file_runners" =>
         [
           {
             "regex" =>    ".*.rb$",

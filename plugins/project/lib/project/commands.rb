@@ -8,7 +8,7 @@ module Redcar
   end
 
   class Project
-    class FileOpenCommand < Command
+    class OpenFileCommand < Command
       def initialize(path = nil, adapter = Adapters::Local.new)
         @path = path
         @adapter = adapter
@@ -17,7 +17,15 @@ module Redcar
       def execute
         path = get_path
         if path
-          Manager.open_file(path, @adapter)
+          if File.readable? path
+            Manager.open_file(path, @adapter)
+          else
+            Application::Dialog.message_box(
+              "Can't read #{path}, you don't have the permissions.",
+              :type => :error,
+              :buttons => :ok
+            )
+          end
         end
       end
 
@@ -40,10 +48,8 @@ module Redcar
 
       def execute
         if tab.edit_view.document.modified?
-          result = Application::Dialog.message_box(
-            "This tab has unsaved changes. \n\nReload?",
-            :buttons => :yes_no_cancel
-          )
+          result = Application::Dialog.message_box("This tab has unsaved changes. \n\nReload?",
+            :buttons => :yes_no_cancel)
           case result
           when :yes
             tab.edit_view.document.update_from_mirror
@@ -82,13 +88,8 @@ module Redcar
       button :connect, "Connect", "Return" do
         selected = self.class.connections.find { |c| c.name == connection.value }
 
-        Manager.connect_to_remote(
-          selected[:protocol],
-          selected[:host],
-          selected[:user],
-          selected[:path],
-          ConnectionManager::PrivateKeyStore.paths
-        )
+        Manager.connect_to_remote(selected[:protocol], selected[:host],
+          selected[:user], selected[:path], ConnectionManager::PrivateKeyStore.paths)
       end
 
       button :quick, "Quick Connection", "Ctrl+Q" do
@@ -123,13 +124,8 @@ module Redcar
       textbox :path
 
       button :connect, "Connect", "Return" do
-        Manager.connect_to_remote(
-            protocol.value,
-            host.value,
-            user.value,
-            path.value,
-            ConnectionManager::PrivateKeyStore.paths
-          )
+        Manager.connect_to_remote(protocol.value, host.value, user.value,
+          path.value, ConnectionManager::PrivateKeyStore.paths)
       end
     end
 
@@ -146,22 +142,48 @@ module Redcar
     #  end
     #end
 
-    class FileSaveCommand < EditTabCommand
+    class SaveFileCommand < EditTabCommand
       def initialize(tab=nil)
         @tab = tab
       end
 
       def execute
         if tab.edit_view.document.mirror
-          tab.edit_view.document.save!
-          Project::Manager.refresh_modified_file(tab.edit_view.document.mirror.path)
+          path          = tab.edit_view.document.mirror.path
+          dir           = File.dirname(path)
+          writable_file = File.writable?(path)
+          writable_dir  = File.writable?(dir) # this method buggy in windows: http://redmine.ruby-lang.org/issues/4712
+          file_exists   = File.exist?(path)
+          can_write     = writable_file || (!file_exists && writable_dir)
+          if can_write
+            begin
+              tab.edit_view.document.save!
+              Project::Manager.refresh_modified_file(tab.edit_view.document.mirror.path)
+            rescue Errno::EACCES # windows
+              show_dialog = true
+            end
+          else
+            show_dialog = true
+          end
+          
+          if show_dialog
+            Application::Dialog.message_box(
+              "Can't save #{tab.edit_view.document.mirror.path}, you don't have the permissions.",
+              :type => :error,
+              :buttons => :ok
+            )
+            result = false
+          end
         else
-          FileSaveAsCommand.new.run
+          result = SaveFileAsCommand.new.run
         end
+        tab.update_for_file_changes
+        result ||= true
+        return result
       end
     end
 
-    class FileSaveAsCommand < EditTabCommand
+    class SaveFileAsCommand < EditTabCommand
 
       def initialize(tab=nil, path=nil)
         @tab  = tab
@@ -171,12 +193,23 @@ module Redcar
       def execute
         path = get_path
         if path
-          contents = tab.edit_view.document.to_s
-          new_mirror = FileMirror.new(path)
-          new_mirror.commit(contents)
-          tab.edit_view.document.mirror = new_mirror
-          Project::Manager.refresh_modified_file(tab.edit_view.document.mirror.path)
+          if File.exists?(path) ? File.writable?(path) : File.writable?(File.dirname(path))
+            contents = tab.edit_view.document.to_s
+            new_mirror = FileMirror.new(path)
+            new_mirror.commit(contents)
+            tab.edit_view.document.mirror = new_mirror
+            Project::Manager.refresh_modified_file(tab.edit_view.document.mirror.path)
+          else
+            Application::Dialog.message_box(
+              "Can't save #{path}, you don't have the permissions.",
+              :type => :error,
+              :buttons => :ok
+            )
+            result = false
+          end
         end
+        result ||= true
+        return result
       end
 
       private
@@ -200,7 +233,7 @@ module Redcar
       def execute
         if path = get_path
           project = Manager.open_project_for_path(path)
-          project.refresh
+          project.refresh if project
         end
       end
 
@@ -213,13 +246,6 @@ module Redcar
             path
           end
         end
-      end
-    end
-
-    class DirectoryCloseCommand < ProjectCommand
-
-      def execute
-        project.close
       end
     end
 
@@ -242,24 +268,48 @@ module Redcar
       end
     end
 
-    class RevealInProjectCommand < ProjectCommand
+    class FindRecentCommand < Command
       def execute
-        tab = Redcar.app.focussed_window.focussed_notebook_tab
-        return unless tab.is_a?(EditTab)
-
-        path = tab.edit_view.document.mirror.path
-        tree = project.tree
-        current = tree.tree_mirror.top
-        while current.any?
-          ancestor_node = current.detect {|node| path =~ /^#{node.path}($|\/)/}
-          tree.expand(ancestor_node)
-          current = ancestor_node.children
-        end
-        tree.select(ancestor_node)
-        project.window.treebook.focus_tree(project.tree)
+        Redcar.app.make_sure_at_least_one_window_open
+        FindRecentDialog.new.open
       end
     end
 
+    class RevealInProjectCommand < ProjectCommand
+      def execute
+        if project
+          tab = Redcar.app.focussed_window.focussed_notebook_tab
+            if tab.is_a?(EditTab)
+            return unless mirror = tab.edit_view.document.mirror and mirror.respond_to? :path
+          else
+            return
+          end
+
+          path = mirror.path
+          tree = project.tree
+          current = tree.tree_mirror.top
+          while current.any?
+            ancestor_node = current.detect {|node| path =~ /^#{node.path}($|\/)/ }
+            return unless ancestor_node
+            tree.expand(ancestor_node)
+            current = ancestor_node.children
+          end
+          tree.select(ancestor_node)
+          project.window.treebook.focus_tree(project.tree)
+        end
+      end
+    end
+
+    class ToggleRevealInProject < ProjectCommand
+      def execute
+        toggle = Project::Manager.reveal_files?
+        Project::Manager.reveal_files = !toggle
+      end
+    end
+
+    # FIXME: XXX: The rest of this file is outright ugly. The Redcar.platform ultimately
+    # needs to return a platform object which we can dispatch to for commandlines,
+    # configuration, escaping and all that.
     class OpenCommand < Command
       attr_reader :path
 
@@ -282,12 +332,12 @@ module Redcar
       end
 
       def run_application(app, *options)
-        if SPOON_AVAILABLE and ::Spoon.supported?
+        # TODO: Investigate why Spoon doesn't seem to work on osx
+        if SPOON_AVAILABLE and ::Spoon.supported? and Redcar.platform != :osx
           ::Spoon.spawn(app, *options)
         else
           # TODO: This really needs proper escaping.
-          options = options.map {|o| "\"#{o}\""}.join(' ')
-          puts "Running: #{app} #{options}"
+          options = options.map {|o| %{ "#{o}" } }.join(' ')
           Thread.new do
             system("#{app} #{options}")
             puts "  Finished: #{app} #{options}"
@@ -297,64 +347,101 @@ module Redcar
     end
 
     class OpenDirectoryInExplorerCommand < OpenCommand
-      def execute(options=nil)
-        @path ||= options[:value]
-        command = self
+      LinuxApps = {
+        'Thunar'    => '%s',
+        'nautilus'  => '%s',
+        'konqueror' => '%s',
+        'pcmanfm'   => '%s',
+        'kfm'       => '%s'
+      }
+
+      def explorer_osx
+        ['open -a Finder', path]
+      end
+
+      def explorer_windows
+        ['explorer.exe', path.gsub("/", "\\")]
+      end
+
+      def explorer_linux
         preferred = Manager.storage['preferred_file_browser']
-        case Redcar.platform
-        when :osx
-          run_application('open', '-a', 'finder', path)
-        when :windows
-          run_application('explorer.exe', path.gsub("/","\\"))
-        when :linux
-          app = {
-            'Thunar' => [path],
-            'nautilus' => [path],
-            'konqueror' => [path],
-            'kfm' => [path],
-          }
-          if preferred and app[preferred] and find(preferred)
-            run = preferred
-          else
-            run = app.keys.map {|a| command.find(a)}.find{|a| a}
-            Manager.storage['preferred_file_browser'] = run if not preferred
-          end
-          if run
-            run_application(run, *app[File.basename(run)])
-          else
-            Application::Dialog.message_box("Sorry, we couldn't find your file manager. Please let us know what file manager you use, so we can fix this!")
-          end
+        run = preferred if LinuxApps[preferred] and find(preferred)
+        LinuxApps.keys.detect {|a| run = @command.find(a) } unless run
+
+        Manager.storage['preferred_file_browser'] = run unless preferred
+
+        [run, LinuxApps[File.basename(run)] % path ] if run
+      end
+
+      def execute(options = nil)
+        @path ||= options[:value]
+        @command = self
+        cmd = send(:"explorer_#{Redcar.platform}")
+        if cmd
+          run_application(*cmd)
+        else
+          Application::Dialog.message_box("Sorry, we couldn't start your file manager. Please let us know what file manager you use, so we can fix this!")
         end
       end
     end
 
     class OpenDirectoryInCommandLineCommand < OpenCommand
-      def execute(options=nil)
-        @path ||= options[:value]
-        command = self
+      LinuxApps = {
+        'xfce4-terminal' => "--working-directory=%s",
+        'gnome-terminal' => "--working-directory=%s",
+        'lxterminal'     => "--working-directory=%s",
+        'konsole'        => "--workdir %s"
+      }
+
+      def osx_terminal_script(preferred)
+        if preferred.start_with? "iTerm"
+          <<-OSASCRIPT
+            tell the first terminal
+              launch session "Default Session"
+                tell the last session
+                write text "cd \\\"#{path}\\\""
+              end tell
+            end tell
+          OSASCRIPT
+        else
+          %{ do script "cd \\\"#{path}\\\"" }
+        end
+      end
+
+      def commandline_osx
+        preferred = (Manager.storage['preferred_command_line'] ||= "Terminal")
+        <<-BASH.gsub(/^\s*/, '')
+          osascript <<END
+            tell application "#{preferred}"
+              #{osx_terminal_script(preferred)}
+              activate
+            end tell
+          END
+        BASH
+      end
+
+      def commandline_windows
+        ['start cmd.exe /kcd ', path.gsub("/","\\")]
+      end
+
+      def commandline_linux
         preferred = Manager.storage['preferred_command_line']
-        case Redcar.platform
-        when :osx
-          run_application('open', path)
-        when :windows
-          run_application('start cmd.exe', '/kcd ' + path.gsub("/","\\"))
-        when :linux
-          app = {
-            'xfce4-terminal' => ["--working-directory=#{path}"],
-            'gnome-terminal' => ["--working-directory=#{path}"],
-            'konsole' => ["--workdir", path],
-          }
-          if preferred and app[preferred] and find(preferred)
-            run = preferred
-          else
-            run = app.keys.map {|a| command.find(a)}.find{|a| a}
-            Manager.storage['preferred_command_line'] = run if not preferred
-          end
-          if run and app[File.basename(run)]
-            run_application(run, *app[File.basename(run)])
-          else
-            Application::Dialog.message_box("Sorry, we couldn't find your command line. Please let us know what command line you use, so we can fix this!")
-          end
+        run = preferred if LinuxApps[preferred] and find(preferred)
+        LinuxApps.keys.detect {|a| run = @command.find(a) } unless run
+
+        Manager.storage['preferred_command_line'] = run unless preferred
+
+        [run, LinuxApps[File.basename(run)] % path ] if run
+      end
+
+      def execute(options = nil)
+        @path ||= options[:value]
+        @command = self
+        cmd = send(:"commandline_#{Redcar.platform}")
+        if cmd
+          run_application(*cmd)
+        else
+          Application::Dialog.message_box("Sorry, we couldn't start your command line. Please let us know what command line you use, so we can fix this!")
         end
       end
     end

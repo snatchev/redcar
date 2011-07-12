@@ -42,6 +42,7 @@ module Redcar
           end
           tab = window.new_tab(HtmlTab)
           tab.html_view.controller = controller
+          tab.icon = :cog
           tab.focus
         end
       end
@@ -81,13 +82,14 @@ module Redcar
     end
 
     def self.file_mappings(project)
-      runnable_file_paths = project.config_files("runnables/*.json")
-
       file_runners = []
-      runnable_file_paths.each do |path|
-        json = File.read(path)
-        this_file_runners = JSON(json)["file_runners"]
-        file_runners += this_file_runners || []
+      if project
+        runnable_file_paths = project.config_files("runnables/*.json")
+        runnable_file_paths.each do |path|
+          json = File.read(path)
+          this_file_runners = JSON(json)["file_runners"]
+          file_runners += this_file_runners || []
+        end
       end
       file_runners
     end
@@ -102,11 +104,13 @@ module Redcar
 
     def self.keymaps
       linwin = Keymap.build("main", [:linux, :windows]) do
+        link "Ctrl+Alt+Shift+R", Runnables::ShowRunnables
         link "Ctrl+R", Runnables::RunEditTabCommand
         link "Ctrl+Alt+R", Runnables::RunAlternateEditTabCommand
       end
 
       osx = Keymap.build("main", :osx) do
+        link "Cmd+Alt+Shift+R", Runnables::ShowRunnables
         link "Cmd+R", Runnables::RunEditTabCommand
         link "Cmd+Alt+R", Runnables::RunAlternateEditTabCommand
       end
@@ -151,5 +155,26 @@ module Redcar
         storage
       end
     end
+
+    def self.quit_guard
+      Runnables::RunningProcessChecker.new(
+        Redcar.app.all_tabs.select {|t| t.is_a?(HtmlTab)},
+        "Kill all and quit?"
+      ).check
+    end
+
+    def self.close_window_guard(win)
+      Runnables::RunningProcessChecker.new(
+        win.notebooks.map(&:tabs).flatten.select {|t| t.is_a?(HtmlTab)},
+        "Kill them and close the window?"
+      ).check
+    end
+
+    def self.project_closed(project,window)
+        rtree = window.treebook.trees.detect { |t|
+          t.tree_mirror.is_a? Runnables::TreeMirror
+        }
+        rtree.close if rtree
+      end
   end
 end

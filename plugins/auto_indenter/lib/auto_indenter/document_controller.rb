@@ -49,6 +49,7 @@ module Redcar
 
       def after_modify
         return if ignore? or in_snippet?
+        
         start_line_ix = document.line_at_offset(@start_offset)
         end_line_ix   = document.line_at_offset([[@start_offset + @text.length, document.length - 1].min, 0].max)
         if start_line_ix == end_line_ix
@@ -57,28 +58,46 @@ module Redcar
           if get_flags(line, rules) != @flags
             edit_view = document.edit_view
             analyzer = Analyzer.new(rules, document, edit_view.tab_width, edit_view.soft_tabs?)
-            increase_ignore
-            document.indentation.set_level(start_line_ix, analyzer.calculate_for_line(start_line_ix, true))
-            decrease_ignore
+            new_indentation = analyzer.calculate_for_line(start_line_ix, true)
+            if new_indentation >= 0 and new_indentation < document.indentation.get_level(start_line_ix)
+              increase_ignore
+              document.indentation.set_level(start_line_ix, new_indentation)
+              decrease_ignore
+            end
           end
         end
       end
 
       def after_newline(line_ix)
         return if ignore? or in_snippet?
+        
         rules = AutoIndenter.rules_for_scope(document.cursor_scope)
         if line_ix > 0
-          indentation = document.indentation
+          indentation   = document.indentation
           current_level = indentation.get_level(line_ix - 1)
-          edit_view = document.edit_view
-          analyzer = Analyzer.new(rules, document, edit_view.tab_width, edit_view.soft_tabs?)
+          edit_view     = document.edit_view
+          analyzer      = Analyzer.new(rules, document, edit_view.tab_width, edit_view.soft_tabs?)
           increase_ignore
-          indentation.set_level(line_ix, analyzer.calculate_for_line(line_ix, true))
+          new_level     = analyzer.calculate_for_line(line_ix, true)
+          document.compound do
+            if analyzer.expand_block?(line_ix)
+              line_start = document.offset_at_line(line_ix)
+              document.insert(line_start, "\n")
+              indentation.set_level(line_ix, analyzer.calculate_for_line(line_ix, true))
+              indentation.set_level(line_ix + 1, analyzer.calculate_for_line(line_ix + 1, true))
+            else
+              indentation.set_level(line_ix, analyzer.calculate_for_line(line_ix, true))
+            end
+            prefix = indentation.whitespace_prefix(line_ix)
+            document.cursor_offset = document.offset_at_line(line_ix) + prefix.length
+          end
           decrease_ignore
-          prefix = indentation.whitespace_prefix(line_ix)
-          document.cursor_offset = document.offset_at_line(line_ix) + prefix.length
         end
       end
     end
   end
 end
+
+
+
+

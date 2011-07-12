@@ -8,6 +8,7 @@ require 'redcar/usage'
 require 'redcar/ruby_extensions'
 require 'redcar/instance_exec'
 require 'redcar/usage'
+require 'redcar/logger'
 require 'regex_replace'
 
 require 'forwardable'
@@ -51,9 +52,9 @@ end
 #
 # and so on.
 module Redcar
-  VERSION         = '0.8.0dev' # also change in the Rakefile!
+  VERSION         = '0.12.0dev' # also change in the Rakefile!
   VERSION_MAJOR   = 0
-  VERSION_MINOR   = 8
+  VERSION_MINOR   = 12
   VERSION_RELEASE = 0
   
   ENVIRONMENTS = [:user, :debug, :test]
@@ -87,10 +88,14 @@ module Redcar
   def self.plugin_manager
     @plugin_manager ||= begin
       m = PluginManager.new
-      m.add_plugin_source(File.join(root, "plugins"))
-      m.add_plugin_source(File.join(user_dir, "plugins"))
+      add_plugin_sources(m)
       m
     end
+  end
+
+  def self.add_plugin_sources(manager)
+    manager.add_plugin_source(File.join(root, "plugins"))
+    manager.add_plugin_source(File.join(user_dir, "plugins"))
   end
 
   def self.load_prerequisites
@@ -99,16 +104,31 @@ module Redcar
     require 'redcar_quick_start'
     
     $:.push File.expand_path(File.join(File.dirname(__FILE__), "plugin_manager", "lib"))
-    require 'plugin_manager'
+    begin
+      require 'plugin_manager'
+    rescue LoadError
+      # TODO is there a project-wide developer error system? or do we just throw errors?
+      puts <<-ERROR
+
+The 'plugin_manager' portion is missing; you probably haven't loaded the git submodules.
+Try:
+
+    rake initialise
+    
+      ERROR
+      exit 1
+    end
+    $:.push File.expand_path(File.join(Redcar.asset_dir))
     
     $:.push File.expand_path(File.join(File.dirname(__FILE__), "json", "lib"))
     require 'json'
-    
-    $:.push File.expand_path(File.join(Redcar.asset_dir))
-    
+
     $:.push File.expand_path(File.join(File.dirname(__FILE__), "openssl", "lib"))
     
     plugin_manager.load("swt")
+  end
+  
+  def self.load_useful_libraries
   end
 
   def self.load_plugins
@@ -164,11 +184,12 @@ module Redcar
   
   def self.show_splash
     return if Redcar.no_gui_mode?
-    
-    Swt.create_splash_screen(plugin_manager.plugins.length + 10)
+    unless ARGV.include?("--no-splash")
+      Swt.create_splash_screen(plugin_manager.plugins.length + 10)
+    end
     plugin_manager.on_load do |plugin|
       Swt.sync_exec do
-        Swt.splash_screen.inc
+        Swt.splash_screen.inc if Swt.splash_screen
       end
     end
   end
@@ -179,7 +200,15 @@ module Redcar
     
     Redcar.gui.start
   end
-
+  
+  # Check if redcar was already installed (currently it just looks if the user_dir is present)
+  # 
+  # @return [Bool] true if redcar was installed previously
+  def self.installed?
+    return true if File.directory? user_dir
+    false
+  end
+  
   # Platform specific ~/.redcar
   #
   # @return [String] expanded path
@@ -201,14 +230,18 @@ module Redcar
   #
   # @return [String] expanded path
   def self.home_dir
-    if platform == :windows
-      if ENV['USERPROFILE'].nil?
-        userdir = "C:/My Documents/"
+    @userdir ||= begin
+      if arg = ARGV.map {|v| v[/^--home-dir=(.*)/, 1] }.compact.first
+        File.expand_path(arg)
+      elsif platform == :windows
+        if ENV['USERPROFILE'].nil?
+          "C:/My Documents/"
+        else
+          ENV['USERPROFILE']
+        end
       else
-        userdir = ENV['USERPROFILE']
+        ENV['HOME'] unless ENV['HOME'].nil?
       end
-    else
-      userdir = ENV['HOME'] unless ENV['HOME'].nil?
     end
   end
   
@@ -222,6 +255,40 @@ module Redcar
     raise "can't set gui twice" if @gui
     return if Redcar.no_gui_mode?
     @gui = gui
+  end
+  
+  def self.log
+    @log ||= begin
+      targets = [log_file]
+      targets << STDOUT if show_log?
+      logger = Redcar::Logger.new(*targets)
+      logger.level = custom_log_level
+      at_exit { logger.close }
+      logger
+    end
+  end
+  
+  def self.log_path
+    user_dir + "/#{environment}.log"
+  end
+  
+  def self.log_file
+    File.open(log_path, "a")
+  end
+  
+  def self.show_log?
+    ARGV.include?("--show-log")
+  end
+  
+  def self.custom_log_level
+    ARGV.map {|a| a =~ /--log-level=(info|debug|warn|error)/; $1}.compact.first
+  end
+  
+  def self.process_start_time
+    @process_start_time ||= begin
+      t = ARGV.map {|arg| arg =~ /--start-time=(\d+)$/; $1}.compact.first
+      t ? Time.at(t.to_i) : $redcar_process_start_time
+    end
   end
 end
 

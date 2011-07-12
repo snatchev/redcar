@@ -11,17 +11,20 @@ module Redcar
       Menu::Builder.build do
         sub_menu "Project" do
           item "Go to declaration", :command => Declarations::GoToTagCommand, :priority => 30
+          sub_menu "Refresh", :priority => 31 do
+            item "Declarations file", :command => Declarations::RebuildTagsCommand
+          end
         end
       end
     end
 
     def self.keymaps
       linwin = Keymap.build("main", [:linux, :windows]) do
-        link "Ctrl+G", Declarations::GoToTagCommand
+        link "Alt+G", Declarations::GoToTagCommand
       end
 
       osx = Keymap.build("main", :osx) do
-        link "Cmd+G", Declarations::GoToTagCommand
+        link "Ctrl+Alt+G", Declarations::GoToTagCommand
       end
 
       [linwin, osx]
@@ -34,17 +37,17 @@ module Redcar
     def self.file_path(project)
       ::File.join(project.config_dir, 'tags')
     end
-    
+
     class ProjectRefresh < Task
       def initialize(project)
         @file_list   = project.file_list
         @project     = project
       end
-      
+
       def description
         "#{@project.path}: reparse files for declarations"
       end
-      
+
       def execute
         return if @project.remote?
         file = Declarations::File.new(Declarations.file_path(@project))
@@ -53,7 +56,7 @@ module Redcar
         Declarations.clear_tags_for_path(file.path)
       end
     end
-    
+
     def self.project_refresh_task_type
       ProjectRefresh
     end
@@ -91,14 +94,24 @@ module Redcar
       DocumentSearch::FindNextRegex.new(regexp, true).run_in_focussed_tab_edit_view
     end
 
+    class RebuildTagsCommand < Command
+      def execute
+        project = Project::Manager.focussed_project
+        tags_path = Declarations.file_path(project)
+        FileUtils.rm tags_path
+        ProjectRefresh.new(project).execute
+      end
+    end
+    
     class GoToTagCommand < EditTabCommand
+      sensitize :open_project
 
       def execute
         if Project::Manager.focussed_project.remote?
           Application::Dialog.message_box("Go to declaration doesn't work in remote projects yet :(")
           return
         end
-          
+
         if doc.selection?
           handle_tag(doc.selected_text)
         else
@@ -113,7 +126,7 @@ module Redcar
           Application::Dialog.message_box("The declarations file 'tags' has not been generated yet.")
           return
         end
-        matches = find_tag(tags_path, token)
+        matches = find_tag(tags_path, token).uniq
         case matches.size
         when 0
           Application::Dialog.message_box("There is no declaration for '#{token}' in the 'tags' file.")

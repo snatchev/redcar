@@ -58,7 +58,7 @@ module Redcar
         end
       end    
       
-      attr_reader :model
+      attr_reader :model, :dialog
       
       def initialize(model)
         @model = model
@@ -110,6 +110,7 @@ module Redcar
         
         def widgetSelected(e)
           @controller.text_focus
+          @controller.widget_selected
         end
       end
       
@@ -144,15 +145,32 @@ module Redcar
       def update_list_sync
         if @dialog
           s = Time.now
-          @update_thread = Thread.new(@dialog.text.get_text) do |text|
-            @model.update_list(text)
+          dialog = @dialog
+          this = self
+          Thread.new(@dialog.text.get_text) do |text|
+            begin
+              list = @model.update_list(text)
+              Redcar.update_gui do
+                this.populate_list(list)
+                if this.dialog
+                  this.dialog.list.set_selection(0)
+                  this.text_focus
+                end
+              end
+            rescue => e
+              puts e.message
+              puts e.backtrace
+            end
           end
-          populate_list(@update_thread.value)
-          @dialog.list.set_selection(0)
-          text_focus
         end
       end
       
+      def widget_selected
+        if @model.step?
+          @model.moved_to(@dialog.list.get_selection.first, @dialog.list.get_selection_index)
+        end
+      end
+
       def text_focus
         @dialog.text.set_focus
       end
@@ -187,23 +205,27 @@ module Redcar
       end
       
       def move_down
-        curr_ix = @dialog.list.get_selection_index
-        new_ix = [curr_ix + 1, @dialog.list.get_item_count - 1].min
-        @dialog.list.set_selection(new_ix)
+        move_selection(1, @dialog.list.get_item_count - 1)
       end
       
       def move_up
+        move_selection(-1, 0)
+      end
+
+      def move_selection(step, border)
         curr_ix = @dialog.list.get_selection_index
-        new_ix = [curr_ix - 1, 0].max
+        new_ix = curr_ix + step
+        new_ix = border if (new_ix <=> border) == step
         @dialog.list.set_selection(new_ix)
+        widget_selected
       end
       
-      private
-      
       def populate_list(contents)
-        @dialog.list.removeAll
-        contents.each do |text|
-          @dialog.list.add(text)
+        if @dialog
+          @dialog.list.removeAll
+          contents.each do |text|
+            @dialog.list.add(text)
+          end
         end
       end
     end

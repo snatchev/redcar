@@ -1,7 +1,3 @@
-RequireSupportFiles File.dirname(__FILE__) + "/../../../application/features/"
-RequireSupportFiles File.dirname(__FILE__) + "/../../../edit_view/features/"
-RequireSupportFiles File.dirname(__FILE__) + "/../../../html_view/features/"
-RequireSupportFiles File.dirname(__FILE__) + "/../../../project/features/"
 
 def runnable_fixtures
   File.expand_path(File.dirname(__FILE__) + "/../fixtures")
@@ -13,9 +9,9 @@ end
 
 def reset_runnable_fixtures
   # Not sure why this is needed, perhaps next test is starting before full deletion?
-  FileUtils.rm_rf runnable_fixtures
-  FileUtils.mkdir_p runnable_fixtures
-  FileUtils.mkdir_p File.dirname(runnable_config)
+  FileUtils.rm_rf(runnable_fixtures)
+  FileUtils.mkdir_p(runnable_fixtures)
+  FileUtils.mkdir_p(File.dirname(runnable_config))
 
   File.open("#{runnable_fixtures}/runnable_app.rb", 'w') do |f|
     f.puts %Q|puts "hello world"|
@@ -72,6 +68,12 @@ def reset_runnable_fixtures
             "name":        "An appendable app",
             "command":     "jruby params_app.rb hello",
             "description": "Runs an app that prints parameters"
+          },
+          {
+            "name": "A nested app",
+            "command": "echo 'lo'",
+            "description": "A test for nesting",
+            "type": "first/second"
           }
         ],
         "file_runners":[
@@ -111,12 +113,12 @@ def reset_runnable_fixtures
   end
 end
 
-Before do
+Before("@runnables") do
   reset_runnable_fixtures
   Redcar.gui.dialog_adapter.clear_input
 end
 
-After do
+After("@runnables") do
   FileUtils.rm_rf runnable_fixtures
   Redcar.gui.dialog_adapter.clear_input
 end

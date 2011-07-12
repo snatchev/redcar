@@ -22,21 +22,9 @@ Then /^there should be (no|one|\d+) windows?$/ do |num|
 end
 
 When /I open a new window(?: with title "(.*)")?/ do |title|
-  Redcar::Top::NewWindowCommand.new(title).run
+  Redcar::Application::OpenNewWindowCommand.new(title).run
 end
 
-class FakeEvent
-  def initialize(event_type, widget)
-    untyped_event = Swt::Widgets::Event.new.tap do |e|
-      e.display = Swt.display
-      e.widget = widget
-      e.x = 0
-      e.y = 0
-    end
-    widget.notify_listeners(event_type, untyped_event)
-  end
-end
-                                                                                                                                             
 When /^I maximize the window size$/ do
   Redcar.app.focussed_window.controller.shell.maximized = true
 end
@@ -49,16 +37,11 @@ When /I close the window(?: "(.*)")?( with a command| through the gui)?/ do |tit
   if title
     win = Redcar.app.windows.detect{|win| win.title == title }
   else
-    win = nil
+    win = Redcar.app.focussed_window
   end
   if how =~ /command/
-    Redcar::Top::CloseWindowCommand.new(win).run
+    Redcar::Application::CloseWindowCommand.new(win).run
   else
-    unless win
-      display = Swt::Widgets::Display.get_current
-      shell = display.get_active_shell
-      win = Redcar.app.windows.detect {|w| w.controller.shell == shell }
-    end
     FakeEvent.new(Swt::SWT::Close, win.controller.shell)
   end
 end

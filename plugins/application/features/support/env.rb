@@ -1,4 +1,10 @@
+require File.expand_path("../fake_event", __FILE__)
+
 class TestingError < StandardError
+end
+
+def get_menu_name text
+  Redcar::Menu.parse(text)
 end
 
 module SwtHelper
@@ -21,8 +27,20 @@ module SwtHelper
     Redcar.app.focussed_window
   end
 
+  def focussed_treebook_width
+    Redcar.app.focussed_window.controller.treebook_width
+  end
+
   def focussed_tree
     focussed_window.treebook.focussed_tree
+  end
+
+  def default_treebook_width
+    Redcar.app.focussed_window.controller.default_treebook_width
+  end
+
+  def tree_with_title(title)
+    focussed_window.treebook.trees.detect {|t| t.tree_mirror.title == title }
   end
 
   def dialog(type)
@@ -56,6 +74,11 @@ module SwtHelper
     find_node_with_text(all_children, node_text) unless all_children.empty?
   end
 
+  def swt_label_for_item(vtabitem)
+    vtablabel = vtabitem.instance_variable_get "@label"
+    vtablabel.instance_variable_get "@label"
+  end
+
   module TreeHelpers
     def items
       getItems.to_a
@@ -79,6 +102,36 @@ class FakeDialogAdapter
 
   def should_get_message(message)
     @message = message
+  end
+
+  def should_get_popup_message(title,text)
+    @popup_message = text
+    @popup_title   = title
+  end
+
+  def should_get_popup_html(text)
+    @popup_html = text
+  end
+
+  def popup_html(*args)
+    unless @popup_text
+      raise TestingError.new("got a popup html dialog with text #{@popup_html.inspect} where I didn't expect one")
+    end
+    unless @popup_text == args.first.inspect
+      raise TestingError.new("expected text #{@popup_text.inspect}, got #{args.first.inspect}")
+    end
+  end
+
+  def popup_text(*args)
+    unless @popup_title and @popup_message
+      raise TestingError.new("got a popup dialog titled #{@popup_title.inspect} with text #{@popup_message.inspect} where I didn't expect one")
+    end
+    unless @popup_title == args.first
+      raise TestingError.new("expected title #{@popup_title.inspect}, got #{args.first.inspect}")
+    end
+    unless @popup_message == args[1]
+      raise TestingError.new("expected text #{@popup_message.inspect}, got #{args[1].inspect}")
+    end
   end
 
   def open_file(*args)
@@ -112,7 +165,7 @@ class FakeDialogAdapter
     end
     val = @inputs[0]
     @inputs.delete_at(0)
-    {:value => val} # no button to speak of...
+    {:value => val, :button => :ok}
   end
 
   def add_input(value)
@@ -147,7 +200,12 @@ def close_everything
     dialogs.each {|d| d.controller.model.close }
   end
   Redcar.app.windows.each do |win|
-    while tree = win.treebook.trees.first
+    if pr = Redcar::Project::Manager.in_window(win)
+      Swt.sync_exec do
+        pr.close
+      end
+    end
+    win.treebook.trees.each do |tree|
       Swt.sync_exec do
         win.treebook.remove_tree(tree)
       end
@@ -159,7 +217,7 @@ def close_everything
         end
       end
     end
-    if win.notebooks.length == 2
+    while win.notebooks.length > 1
       Swt.sync_exec do
         win.close_notebook
       end
@@ -185,17 +243,15 @@ end
 After do
   close_everything
   errors = Redcar.app.history.select {|command| command.error }
+  Redcar.app.history.clear
   if errors.any?
     raise "Command errors #{errors.inspect}"
   end
-  Redcar.app.history.clear
-  total_mem = java.lang.Runtime.getRuntime.totalMemory
-  free_mem  = java.lang.Runtime.getRuntime.freeMemory
-  p [:total, total_mem, :free, free_mem, :diff, total_mem - free_mem]
+  # total_mem = java.lang.Runtime.getRuntime.totalMemory
+  # free_mem  = java.lang.Runtime.getRuntime.freeMemory
+  # p [:total, total_mem/1000, :free, free_mem/1000, :diff, (total_mem - free_mem)/1000]
 end
 
 at_exit {
   FileUtils.rm_rf(Redcar::Plugin::Storage.storage_dir)
 }
-
-

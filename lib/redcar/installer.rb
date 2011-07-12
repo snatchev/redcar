@@ -18,27 +18,32 @@ module Redcar
       end
       puts "found latest XULRunner release version: #{xulrunner_version}" if Redcar.platform == :windows
     end
-      
+
     def install
       Redcar.environment = :user
-      puts "Downloading >10MB of binary assets. This may take a while the first time."
+      puts "Downloading >10MB of necessary assets..."
       fetch_all_assets
       precache_textmate_bundles
-      puts "Done! You're ready to run Redcar."
+      ensure_user_plugins_directory_exists
+      puts "Success!"
+      puts ""
+      puts "To open just the editor:       redcar"
+      puts "To open the current directory: redcar ."
+      puts "More information:              http://redcareditor.com/"
     end
-  
+
     def plugins_dir
       File.expand_path(File.join(File.dirname(__FILE__), %w(.. .. plugins)))
     end
-    
+
     def fetch_all_assets
       assets = assets_by_platform[:all].merge(assets_by_platform[Redcar.platform])
       assets.each {|source, target| fetch_asset(source, target) }
     end
-    
+
     def assets_by_platform
       { :all => {
-          "http://jruby.org.s3.amazonaws.com/downloads/1.5.2/jruby-complete-1.5.2.jar" => "/jruby-complete-1.5.2.jar",
+          "http://jruby.org.s3.amazonaws.com/downloads/1.6.1/jruby-complete-1.6.1.jar" => "/jruby-complete-1.6.1.jar",
           "http://redcar.s3.amazonaws.com/jface/org.eclipse.core.commands.jar" => nil,
           "http://redcar.s3.amazonaws.com/jface/org.eclipse.core.runtime_3.5.0.v20090525.jar" => nil,
           "http://redcar.s3.amazonaws.com/jface/org.eclipse.equinox.common.jar" => nil,
@@ -61,7 +66,10 @@ module Redcar
           "http://redcar.s3.amazonaws.com/clojure-contrib-1.2beta1.jar" => "/clojure-contrib.jar",
           "http://redcar.s3.amazonaws.com/org-enclojure-repl-server.jar" => nil,
           "http://mirrors.ibiblio.org/pub/mirrors/maven2/org/codehaus/groovy/groovy-all/1.7.4/groovy-all-1.7.4.jar" => "/groovy-all.jar",
-          "http://mirrors.ibiblio.org/pub/mirrors/maven2/org/tmatesoft/svnkit/svnkit/1.3.4/svnkit-1.3.4.jar" => "/svnkit.jar"
+          "http://mirrors.ibiblio.org/pub/mirrors/maven2/org/tmatesoft/svnkit/svnkit/1.3.4/svnkit-1.3.4.jar" => "/svnkit.jar",
+          # "http://mirrors.ibiblio.org/pub/mirrors/maven2/rhino/js/1.7R2/js-1.7R2.jar" => "/js.jar",
+          "http://redcar.s3.amazonaws.com/deps/rhino-js-1.7R2.jar" => "/js.jar",
+          "http://redcar.s3.amazonaws.com/lucene-core-2.9.1.jar" => "lucene/jars/lucene-core-2.9.1.jar"
         },
         :windows => {
           "http://releases.mozilla.org/pub/mozilla.org/xulrunner/releases/#{xulrunner_version}/runtimes/xulrunner-#{xulrunner_version}.en-US.win32.zip" => "xulrunner-#{xulrunner_version}.en-US.win32.zip",
@@ -77,19 +85,23 @@ module Redcar
         }
       }
     end
-    
+
     def fetch_asset(source, target)
       relative_target   = target || implicit_target(source)
       absolute_target   = File.join(Redcar.asset_dir, relative_target)
-      return if File.exist?(absolute_target)
+      if File.exist?(absolute_target)
+        unless source =~ /dev\.jar/
+          return
+        end
+      end
       download_file_to(source, absolute_target)
       unzip_file(absolute_target) if absolute_target =~ /\.zip$/
     end
-    
+
     def implicit_target(source)
       URI.parse(source).path.gsub(/^\//, "")
     end
-    
+
     def download_file_to(uri, destination_file)
       print "  downloading #{uri}... "; $stdout.flush
       temporary_target  = destination_file + ".part"
@@ -97,18 +109,18 @@ module Redcar
       File.open(temporary_target, "wb") do |write_out|
         write_out.print @connection.get(URI.parse(uri))
       end
-      
+
       if File.open(temporary_target).read(200) =~ /Access Denied/
         puts "\n\n*** Error downloading #{uri}, got Access Denied from S3."
         FileUtils.rm_rf(temporary_target)
         exit
       end
-      
+
       FileUtils.cp(temporary_target, destination_file)
       FileUtils.rm_rf(temporary_target)
       puts "done!"
     end
-    
+
     # unzip a .zip file into the directory it is located
     def unzip_file(path)
       print "unzipping #{path}..."; $stdout.flush
@@ -125,15 +137,19 @@ module Redcar
         end
       end
     end
-    
+
     def precache_textmate_bundles
       puts "Precaching textmate bundles..."
       Runner.new.construct_command(["--no-gui", "--compute-textmate-cache-and-quit", "--multiple-instance"]) do |cmd|
         %x{#{cmd.join(' ')}}
       end
     end
-    
-    # Xulrunner releases don't hang around very long, so we scrape their site to figure out 
+
+    def ensure_user_plugins_directory_exists
+      FileUtils.mkpath File.join(Redcar.user_dir, 'plugins')
+    end
+
+    # Xulrunner releases don't hang around very long, so we scrape their site to figure out
     # which one to download this time.
     def xulrunner_version
       @xulrunner_version ||= begin
@@ -143,5 +159,3 @@ module Redcar
     end
   end
 end
-
-

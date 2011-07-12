@@ -51,7 +51,7 @@ module Redcar
     # our vendored jarred one (useful for gems).
     def construct_command(args="")
       bin = File.expand_path(File.join(File.dirname(__FILE__), %w{.. .. bin redcar}))
-      jruby_complete = File.expand_path(File.join(Redcar.asset_dir, "jruby-complete-1.5.2.jar"))
+      jruby_complete = File.expand_path(File.join(Redcar.asset_dir, "jruby-complete-1.6.1.jar"))
       unless File.exist?(jruby_complete)
         puts "\nCan't find jruby jar at #{jruby_complete}, did you run 'redcar install' ?"
         exit 1
@@ -60,19 +60,21 @@ module Redcar
 
       # Windows XP updates
       if [:windows].include?(Redcar.platform)
-	bin = "\"#{bin}\""
-	jruby_complete = "\"#{jruby_complete}\""
+        bin = "\"#{bin}\""
+        jruby_complete = "\"#{jruby_complete}\""
       end      
 
       # unfortuanately, ruby doesn't support [a, *b, c]
       command = ["java"]
       command.push(*java_args)
-      command.push("-Xmx500m", "-Xss1024k", "-Djruby.memory.max=500m", "-Djruby.stack.max=1024k", "-cp", jruby_complete, "org.jruby.Main")
+      command.push("-Xbootclasspath/a:#{jruby_complete}")
+      command.push("-Dfile.encoding=UTF8", "-Xmx320m", "-Xss1024k", "-Djruby.memory.max=320m", "-Djruby.stack.max=1024k", "org.jruby.Main")
       command.push "--debug" if debug_mode?
       command.push(bin)
       command.push(*cleaned_args)
       command.push("--no-sub-jruby", "--ignore-stdin")
       command.push(*args)
+      command.push "--start-time=#{$redcar_process_start_time.to_i}"
       
       puts command.join(' ')
       yield command
@@ -105,14 +107,24 @@ module Redcar
         str.push "-Djruby.debug.loadService.timing=true"
       end
 
-      require 'redcar/jvm_options_probe'
-      
-      jvm_options_probe = JvmOptionsProbe.new
-      
-      str.push "-d32" if jvm_options_probe.can_use_d32?
-      str.push "-client" if jvm_options_probe.can_use_client?
+      str.push "-d32" if JvmOptionsProbe.d32
+      str.push "-client" if JvmOptionsProbe.client
       
       str
+    end
+
+    class JvmOptionsProbe
+      def self.redirect
+        @redirect ||= "> #{Redcar.null_device} 2>&1"
+      end
+      
+      def self.d32
+        @d32 ||= system("java -d32 #{redirect}")
+      end
+      
+      def self.client 
+        @client ||= system("java -client #{redirect}")
+      end
     end
   end
 end

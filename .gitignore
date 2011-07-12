@@ -28,6 +28,9 @@ plugins/dans
 plugins/*/lib/dist/
 pkg
 
+plugins/core/spec/core/*.yaml
+plugins/scm_svn/features/fixtures
+
 tmp
 plugins/repl/vendor/clojure-contrib.jar
 plugins/repl/vendor/clojure.jar
@@ -35,3 +38,7 @@ plugins/repl/vendor/org-enclojure-repl-server.jar
 vendor/swtbot
 .server.yaml
 .yardoc
+
+.bundle
+
+.DS_Store

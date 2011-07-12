@@ -1,18 +1,28 @@
 
 Given /^I have open a file$/ do
-  Redcar::Project::FileOpenCommand.new.run
+  Redcar::Project::OpenFileCommand.new.run
+end
+
+Given /^I will open a large file from the "([^"]*)" dialog$/ do |arg1|
+  Given %Q|I will choose "plugins/project/spec/fixtures/winter.txt" from the "open_file" dialog|
+  Redcar::Project::Manager.file_size_limit = 1
 end
 
 When /^I open a file$/ do
-  Redcar::Project::FileOpenCommand.new.run
+  Redcar::Project::OpenFileCommand.new.run
 end
 
 Given /^I have opened "([^\"]*)"$/ do |arg1|
-  Redcar::Project::FileOpenCommand.new(File.expand_path(arg1)).run
+  Redcar::Project::OpenFileCommand.new(File.expand_path(arg1)).run
+end
+
+Given /^I have opened "([^\"]*)" from the project$/ do |arg1|
+  project = Redcar::Project::Manager.focussed_project
+  Redcar::Project::OpenFileCommand.new(project.path + "/" + arg1).run
 end
 
 When /^I save the tab$/ do
-  Redcar::Project::FileSaveCommand.new.run
+  Redcar::Project::SaveFileCommand.new.run
 end
 
 When /^I touch the file "([^\"]*)"$/ do |fn|
@@ -25,7 +35,12 @@ When /^I put "([^\"]*)" into the file "([^\"]*)"$/ do |contents, path|
 end
 
 When /^I save the tab as$/ do
-  Redcar::Project::FileSaveAsCommand.new.run
+  Redcar::Project::SaveFileAsCommand.new.run
+end
+
+Then /^the file "([^"]*)" should be deletable$/ do |path|
+  File.delete path
+  raise if File.exist? path
 end
 
 Then /^the file "([^\"]*)" should contain "([^\"]*)"$/ do |arg1, arg2|

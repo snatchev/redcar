@@ -1,10 +1,175 @@
-Version 0.8 (TBA)
+Version 0.12 (TBA)
+==================
+
+ * Features run all the way through again, and can be run in the background 
+   (the test window no longer needs to be focussed) (Dan Lucraft)
+ * Added --no-splash option (Dan Lucraft)
+ * Fix runnables for JRuby 1.6.1 (Chris Nelson)
+ * Improved developer first experience (Dr Nic Williams)
+ * Improved after install instruction language (Jeff Casimir)
+ * Added forward char, backward char, and delete char commands (Dan Lucraft)
+ * Fixed irritating bugs in the indenter (Dan Lucraft)
+ * Pressing enter when between {} will expand the block (Dan Lucraft)
+ * Tweak to line numbers so highlighting isn't lost as doc passes 100 lines (Dan Lucraft)
+ * Added next line, previous line bindings to Ctrl+N and Ctrl+P (Dan Lucraft)
+ * Added open line, transpose characters commands (Dan Lucraft)
+
+Version 0.11 (23 March 2011)
 ============================
+
+Enhancements:
+
+ * Project search backed by Lucene (Dan Lucraft)
+ * Fuzzy file finder now recognizes directories "a/c/repocontr" (Tim Felgentreff)
+ * Recent project fuzzy finder (Benedikt Müller)
+ * Improved DocumentSearch, with UI refinements, added Replace All commands (Tom Murray)
+ * Raise/lower region behaves better when you select multiple lines (Benedikt Müller)
+ * Which files are hidden in a project is now configurable (Konstantin Haase)
+ * Added logger at Redcar.log, goes to ~/.redcar/user.log (Dan Lucraft)
+ * Can hide files and directories from the project context menu (Benedikt Müller)
+ * Notification if Redcar doesn't have permission to save files (Benedikt Müller & Bill Siggelkow)
+ * Tweaked the load order to make the window appear faster during startup (Dan Lucraft)
+ * All the plugins use a single preference value to ignore files (Benedikt Müller & Daniel Lucraft)
+ * Can ignore directories (Benedikt Müller)
+ * User definable keybindings (Chris Nelson)
+
+Bugfixes:
+ * Fixed Unicode problems in DocumentSearch (Tom Murray)
+ * You can now symlink bin/redcar (Konstantin Haase)
+ * Runnables are now terminated correctly when the tab is closed (Dan Lucraft)
+ * You are once again prompted when you close a window with running Runnables in (Dan Lucraft)
+ * Fix encoding issue that broke highlighting when there are multi-byte characters in a line (Dan Lucraft)
+ * Fixed project-dependent trees remaining open when project is closed (Delisa Mason)
+
+Version 0.10 (17 January 2011)
+==============================
+
+Enhancements:
+
+ * Add "Close others" and "Close all" commands to the File menu (Clinton R Nixon)
+ * Syntax checking for Java (Delisa Mason)
+ * Git integration is now available when the current project is a subdirectory of a repository (Delisa Mason)
+ * Ctrl+A/E (home and end) added for Linux (Tomasz Wegrzanowski)
+ * Trim line deletes newline if rest of line is empty (Tomasz Wegrzanowski)
+ * Fuzzy finders (e.g. find file) ignore spaces. (Tomasz Wegrzanowski)
+ * Highlighting the current file in the project tree is now optional and is in the Project menu (Delisa Mason)
+ * Document Search is now incremental (Delisa Mason)
+ * REPL Enhancements, including commit on Return (Delisa Mason)
+ * Mirah syntax checking (Michal Hantl)
+ * Mirah REPL (Delisa Mason)
+ * More keybindings for adjusting views, such as changing font size, notebook width, and focussed tree (Delisa Mason)
+ * New look! (Max Hawkins)
+ * 3+ notebooks allowed at once (Dotan J. Nahum)
+ * Configurable test runner plugin (Chris Nelson)
+ * Added menu mnemonics for Linux and Windows (Delisa Mason)
+ * Much improved search and replace behaviour (Tom Murray)
+
+Bugfixes:
+
+ * TitleCase now works when the selected text has capital letters in it (Delisa Mason)
+ * Go to Declaration is only available when a project is open (Delisa Mason)
+ * Saving a file prompts before overwriting (Delisa Mason)
+ * Encrypt/Decrypt does not happen if a user cancels (Utkarsh Kukreti)
+ * Fix the "Index out of bounds" errors in the pair highlighter (Delisa Mason)
+ * Searching will now scroll the window horizontally (#400) (Delisa Mason)
+
+New APIs:
+
+ * Non-modal text, list, and browser dialogs in Application::Dialog (Delisa Mason)
+
+Version 0.9.1 (2 December 2010)
+===============================
+
+ * Move rhino mirror (Dan Lucraft)
+
+Version 0.9 (25 November 2010)
+==============================
+
+Enhancements:
+
+ * Vertical tree tabs now have a close button like edit view tabs (Tim Felgentreff)
+ * Strip Trailing Spaces is now _much_ faster (Tim Felgentreff)
+ * "Online Help" and "Submit a Bug" open the default system browser (Johannes Wollert)
+ * -l command line switch to jump to a file number (Johannes Wollert)
+ * Font and Theme dialogs now update the setting on selection change for instant feedback (Tim Felgentreff)
+ * Tabs now display an alert icon if the underlying file is unwritable (Delisa Mason)
+ * Browser bar URL field now supports project-relative paths (Delisa Mason)
+ * URLs can be opened in the internal browser or the OS-default based on preferences (Delisa Mason)
+ * Syntax checking for Groovy (Delisa Mason)
+ * Jump to declaration for Groovy (Delisa Mason)
+ * Margin is drawn with a line or a shaded area (Tim Felgentreff)
+ * Syntax checking for JavaScript (Delisa Mason)
+ * Word wrap wraps at the margin column (Daniel Lucraft)
+ * Improvements and optimizations to replace-all function (Tim Felgentreff)
+ * .redcar plugins dir is created on startup to help people know they can put plugins there (Philip Arndt)
+ * Add jruby jar to JVM bootclasspath to speedup startup marginally (Tim Felgentreff)
+
+Bug fixes:
+
+ * Declarations plugin is able to deal with similarly named ruby methods
+ * Declarations plugin lets Ruby methods have trailing spaces (Johannes Wollert)
+ * Fix Application::Dialog#tool_tip to set the location correctly on Windows (Patrik Sundberg)
+ * 64bit Soylatte JDK7 can now be used to run Redcar on Mac OS X
+ * Run Tab now checks for underlying file (Delisa Mason)
+ * Hovering on annotations only displays the tooltip(s) under the cursor, not all of them (Delisa Mason)
+ * Fix for installing on Ruby 1.8.6 (Dan Lucraft)
+ * Connection manager should not try and read directories and unreadable files when looking for private keys (Antono Vasiljev)
+ * Required cucumber version is specified in the Gemfile (Tianyi Cui)
+ * Pair highlighter works on first and last character in the document (Kirill Nikitin)
+
+Internal changes:
+
+  * Code coverage is above 70% (up from 60%) (everyone)
+  * Code cleanup and refactoring in various plugins (everyone)
+  * Speedbar can now contain sliders (Tim Felgentreff)
+
+Version 0.8.1 (26 October 2010)
+===============================
+
+ * Replace all is a single undo operation (Steven Hancock)
+ * Remove files with multi-byte names from the gem so windows rubygems is happy (Dan Lucraft)
+
+Version 0.8 (26 October 2010)
+=============================
 
 Enhancements:
 
  * Alternate Runnables File Runner command and shortcut (Delisa Mason)
  * File runners now have access to line number and file names (Delisa Mason)
+ * Projects can have 'subproject' windows which share config files like Runnables (Delisa Mason)
+ * Symlinks to other directories are searched recursively (Tim Felgentreff)
+ * Redcar can be started without opening a window (for boot-time startup) (Tim Felgentreff)
+ * The Mac OS X app bundle comes with assets bundled (Tim Felgentreff)
+ * The Runnables tree now nests runnables depending on slashes in the type definition (Tim Felgentreff)
+ * Deleting or moving a file updates the tab title and file correctly. (Delisa Mason)
+ * Paired characters are not inserted if it looks like you are closing a pair (Dan Lucraft)
+ * Syntax checking for Ruby upon save (Tim Felgentreff)
+ * Deleting a file from the project tree will move it to the trash, if the OS permits (Tim Felgentreff)
+ * Help Menu options for submitting bugs and viewing the users' guide (Delisa Mason)
+ * Toggle line and selection commenting (Delisa Mason)
+ * Clipboard History Viewer and Paster (Delisa Mason)
+ * Web Preview files and Bookmarks (Delisa Mason)
+ * -w commandline switch to block the prompt when piping into or opening files on an existing Redcar instance (Tim Felgentreff)
+ * 'Open Default App' project context menu item for opening any type of file (Jeremy Wentworth)
+ * Changing to another tab reveals the associated file in the project tree (Johannes Wollert)
+ * Trees can be hidden or revealed by a keyboard shortcut (Delisa Mason)
+ * Fullscreen mode! (Matt Scharley)
+
+Bugfixes:
+
+ * Snippet completion works even when preceded by other characters (Delisa Mason)
+ * New files now open in the project window which is the closest ancestor (Delisa Mason)
+ * Search-and-replace now operates on the user-selected text as well, not only after it (Tim Felgentreff)
+ * Word back/forward movement is not confused by multi-byte characters. (Dan Lucraft)
+ * Can load files with multi-byte characters and see them in the tree (Dan Lucraft)
+ * Open in command line now works correctly with Terminal.app (Delisa Mason, Mat Schaffer)
+ * Search-and-replace won't loop forever over a document anymore if it still finds the search string (Tim Felgentreff)
+ * Goto line command works again (Dan Lucraft)
+ * Run tab commands are now project-aware (Delisa Mason)
+
+New APIs:
+ * after_save can be implemented by plugins to run code after an edit view was saved (Tim Felgentreff)
+ * before_web_refresh can be implemented by plugins to run code before a HtmlTab is refreshed (Delisa Mason)
 
 Version 0.7 (4 October 2010)
 ============================

@@ -18,25 +18,24 @@ module Redcar
       end
       
       def ask_before_closing
-        if @shell
+        if @pid
           "This tab contains an unfinished process. \n\nKill the process and close?"
         end
       end
       
       def close
-        if @shell
-          Process.kill(9, @shell.pid.to_i + 1)
+        if @pid
+          Process.kill(9, @pid.to_i + 1)
         end
       end
       
       def run
         case Redcar.platform
         when :osx, :linux
-          cmd = "cd #{@path}; " + @cmd
+          cmd = "sh -c \"cd #{@path}; #{@cmd}\""
         when :windows
           cmd = "cd \"#{@path.gsub('/', '\\')}\" & #{@cmd}"
         end
-        
         run_command(cmd)
       end
       
@@ -82,19 +81,24 @@ module Redcar
           # TODO: Find browser's onload rather than sleeping
           sleep 1
           start_output_block
-          Redcar.logger.info "Running: #{cmd}"
+          Redcar.log.info "Running: #{cmd}"
           
           # JRuby-specific
-          pid, input, output, error = IO.popen4(cmd)
+          @pid, input, output, error = IO.popen4(cmd)
           @stdout_thread = output_thread(:stdout, output)
           @stderr_thread = output_thread(:stderr, error)
           
           Thread.new do
-            sleep 0.1 until @stdout_thread_started && @stderr_thread_started &&
-                            !@stdout_thread.alive? && !@stderr_thread.alive?
+            sleep 0.1 until finished?
+            @pid = nil
             end_output_block
           end
         end
+      end
+      
+      def finished?
+        @stdout_thread_started && @stderr_thread_started &&
+          !@stdout_thread.alive? && !@stderr_thread.alive?
       end
       
       def format_time(time)
@@ -162,6 +166,11 @@ module Redcar
         scroll_to_end(output_container)
       end
 
+      def open_file(file, line)
+        Project::Manager.open_file(File.join(Project::Manager.focussed_project.path, file))
+        Redcar.app.focussed_window.focussed_notebook_tab.edit_view.document.scroll_to_line(line.to_i)
+      end
+      
       def index
         rhtml = ERB.new(File.read(File.join(File.dirname(__FILE__), "..", "..", "views", "command_output.html.erb")))
         command = @cmd

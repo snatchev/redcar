@@ -10,9 +10,16 @@ module Redcar
     def self.menus
       Menu::Builder.build do
         sub_menu "Project" do
-          item "Todo List", TodoList::ViewListCommand
+          item "Todo List", TodoList::ViewTodoListCommand
         end
       end
+    end
+
+    def self.keymaps
+      map = Redcar::Keymap.build("main",[:osx,:linux,:windows]) do
+        link "Alt+Shift+T", TodoList::ViewTodoListCommand
+      end
+      [map]
     end
 
     def self.storage
@@ -27,13 +34,14 @@ module Redcar
       end
     end
 
-    class ViewListCommand < Redcar::Command
+    class ViewTodoListCommand < Redcar::Command
       sensitize :open_project
       def execute
         project = Project::Manager.in_window(win)
         controller = TodoController.new(project.home_dir)
         tab = win.new_tab(HtmlTab)
         tab.html_view.controller = controller
+        tab.icon = :document_list
         tab.focus
       end
     end

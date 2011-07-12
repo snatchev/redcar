@@ -2,7 +2,6 @@
 module Redcar
   class Command
     class Executor
-      include Redcar::Core::HasLogger
       
       attr_reader :options, :command_instance
       
@@ -48,7 +47,6 @@ module Redcar
       def set_environment
         env = Executor.current_environment || {}
         env = env.merge(options.delete(:env) || {})
-        
         @command_instance.environment(env)
       end
       

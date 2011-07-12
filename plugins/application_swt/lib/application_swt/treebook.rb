@@ -23,7 +23,7 @@ module Redcar
         i.text = tree.tree_mirror.title
         i.control = TreeViewSWT.new(@tab_folder, tree)
         tree.controller = i.control
-        @tab_folder.silent_selection(i)
+        @tab_folder.selection = i
       end
 
       def tree_removed(tree)
@@ -33,27 +33,40 @@ module Redcar
 
       def tree_focussed(tree)
         item = @tab_folder.get_item(tree.tree_mirror.title)
-        @tab_folder.silent_selection(item)
+        @tab_folder.selection = item
       end
 
       def create_tree_view
         @tab_folder = Swt::Widgets::VTabFolder.new(@window.tree_sash, Swt::SWT::NONE)
-        colors = [ Swt::Graphics::Color.new(display, 230, 240, 255),
-          Swt::Graphics::Color.new(display, 170, 199, 246),
-          Swt::Graphics::Color.new(display, 135, 178, 247) ]
-        percents = [60, 85]
-        @tab_folder.set_selection_background(colors, percents, true)
 
-        @tab_folder.add_selection_listener do |event|
-          tab_item = event.item
-          tree_view_swt = tab_item.control
-          @model.focus_tree(tree_view_swt.model)
-        end
+        selected_tab_background = Redcar::ApplicationSWT.selected_tab_background
+        @tab_folder.set_selection_background(selected_tab_background.swt_colors, selected_tab_background.swt_stops, true)
+
+        unselected_tab_background = Redcar::ApplicationSWT.unselected_tab_background
+        @tab_folder.set_background(unselected_tab_background.swt_colors, unselected_tab_background.swt_stops, true)
+
+        attach_view_listeners
 
         @tab_folder.layout
         @window.left_composite.layout
       end
+
+      def attach_view_listeners
+        @tab_folder.add_ctab_folder2_listener do |event|
+          # Close event
+          tab_item = event.item
+          tree_view_swt = tab_item.control
+          @model.remove_tree(tree_view_swt.model)
+        end
+
+        @tab_folder.add_selection_listener do |event|
+          # Widget selected event
+          tab_item = event.item
+          tree_view_swt = tab_item.control
+          tree = tree_view_swt.model
+          @model.focus_tree(tree)
+        end
+      end
     end
   end
 end
-
